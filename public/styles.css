@@ -67,8 +67,9 @@ body {
 .instance-bar {
   position: absolute;
   height: var(--bar-height);
-  border-radius: 3px;
+  border-radius: 2px;
   opacity: 0.95;
+  anchor-name: attr(data-anchor-id);
 }
 
 .instance-bar:hover {

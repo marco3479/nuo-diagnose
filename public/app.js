@@ -17154,6 +17154,11 @@ function StackApp() {
   const [dragStartX, setDragStartX] = import_react.useState(0);
   const [dragStartRange, setDragStartRange] = import_react.useState({ start: 0, end: 0 });
   const [rangeBarHover, setRangeBarHover] = import_react.useState(false);
+  const [focusedRowIndex, setFocusedRowIndex] = import_react.useState(-1);
+  const [focusedEventIndex, setFocusedEventIndex] = import_react.useState(-1);
+  const [panelFocus, setPanelFocus] = import_react.useState("timeline");
+  const [focusedTimelineItem, setFocusedTimelineItem] = import_react.useState(null);
+  const [hoveredBar, setHoveredBar] = import_react.useState(null);
   async function load(p = path) {
     setLoading(true);
     try {
@@ -17283,6 +17288,7 @@ function StackApp() {
     return sortDir === "asc" ? c : -c;
   };
   const visibleSorted = filtered.slice().sort(comparator);
+  const allTableRows = [...Object.keys(dbStates || {}).map((db) => ({ type: "db", key: db })), ...visibleSorted.map((inst, idx) => ({ type: "instance", key: `inst-${idx}`, instance: inst }))];
   const toggleSort = (key) => {
     if (sortKey === key)
       setSortDir((d) => d === "asc" ? "desc" : "asc");
@@ -17305,6 +17311,163 @@ function StackApp() {
     const bMin = bStarts.length ? Math.min(...bStarts) : Infinity;
     return aMin - bMin;
   });
+  import_react.useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (panelFocus === "timeline") {
+        const timelineItems = [
+          ...Object.keys(dbStates || {}).map((db) => ({ type: "db", key: db })),
+          ...addresses.flatMap((addr) => (groupsByAddress[addr] || []).map((sid) => ({ type: "sid", key: sid })))
+        ];
+        const currentIndex = focusedTimelineItem ? timelineItems.findIndex((item) => item.type === focusedTimelineItem.type && item.key === focusedTimelineItem.key) : -1;
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          if (currentIndex < timelineItems.length - 1) {
+            const nextItem = timelineItems[currentIndex + 1];
+            if (nextItem) {
+              setFocusedTimelineItem({ type: nextItem.type, key: nextItem.key, index: 0 });
+              if (nextItem.type === "db") {
+                setSelectedDb(nextItem.key);
+                setSelectedSid(null);
+              } else {
+                setSelectedSid(Number(nextItem.key));
+                setSelectedDb(null);
+              }
+            }
+          } else {
+            setPanelFocus("table");
+            setFocusedRowIndex(0);
+            if (allTableRows.length > 0) {
+              const row = allTableRows[0];
+              if (row && row.type === "db") {
+                setSelectedDb(row.key);
+                setSelectedSid(null);
+              } else if (row && row.type === "instance" && "instance" in row && row.instance) {
+                setSelectedSid(row.instance.sid);
+                setSelectedDb(null);
+              }
+            }
+          }
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          if (currentIndex > 0) {
+            const prevItem = timelineItems[currentIndex - 1];
+            if (prevItem) {
+              setFocusedTimelineItem({ type: prevItem.type, key: prevItem.key, index: 0 });
+              if (prevItem.type === "db") {
+                setSelectedDb(prevItem.key);
+                setSelectedSid(null);
+              } else {
+                setSelectedSid(Number(prevItem.key));
+                setSelectedDb(null);
+              }
+            }
+          }
+        } else if (e.key === "ArrowRight" && focusedTimelineItem) {
+          e.preventDefault();
+          setPanelFocus("events");
+          setFocusedEventIndex(0);
+        }
+      } else if (panelFocus === "table") {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          const newIndex = Math.min(focusedRowIndex + 1, allTableRows.length - 1);
+          setFocusedRowIndex(newIndex);
+          if (newIndex >= 0 && newIndex < allTableRows.length) {
+            const row = allTableRows[newIndex];
+            if (row && row.type === "db") {
+              setSelectedDb(row.key);
+              setSelectedSid(null);
+              setFocusedTimelineItem({ type: "db", key: row.key, index: 0 });
+            } else if (row && row.type === "instance" && "instance" in row && row.instance) {
+              setSelectedSid(row.instance.sid);
+              setSelectedDb(null);
+              setFocusedTimelineItem({ type: "sid", key: String(row.instance.sid), index: 0 });
+            }
+          }
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          const newIndex = Math.max(focusedRowIndex - 1, 0);
+          if (focusedRowIndex === 0) {
+            setPanelFocus("timeline");
+            const timelineItems = [
+              ...Object.keys(dbStates || {}).map((db) => ({ type: "db", key: db })),
+              ...addresses.flatMap((addr) => (groupsByAddress[addr] || []).map((sid) => ({ type: "sid", key: sid })))
+            ];
+            if (timelineItems.length > 0) {
+              const lastItem = timelineItems[timelineItems.length - 1];
+              if (lastItem) {
+                setFocusedTimelineItem({ type: lastItem.type, key: lastItem.key, index: 0 });
+                if (lastItem.type === "db") {
+                  setSelectedDb(lastItem.key);
+                  setSelectedSid(null);
+                } else {
+                  setSelectedSid(Number(lastItem.key));
+                  setSelectedDb(null);
+                }
+              }
+            }
+          } else {
+            setFocusedRowIndex(newIndex);
+            if (newIndex >= 0 && newIndex < allTableRows.length) {
+              const row = allTableRows[newIndex];
+              if (row && row.type === "db") {
+                setSelectedDb(row.key);
+                setSelectedSid(null);
+                setFocusedTimelineItem({ type: "db", key: row.key, index: 0 });
+              } else if (row && row.type === "instance" && "instance" in row && row.instance) {
+                setSelectedSid(row.instance.sid);
+                setSelectedDb(null);
+                setFocusedTimelineItem({ type: "sid", key: String(row.instance.sid), index: 0 });
+              }
+            }
+          }
+        } else if (e.key === "ArrowRight" && (selectedSid !== null || selectedDb !== null)) {
+          e.preventDefault();
+          setPanelFocus("events");
+          setFocusedEventIndex(0);
+        }
+      } else if (panelFocus === "events") {
+        let eventCount = 0;
+        if (selectedDb !== null) {
+          eventCount = (dbStates[selectedDb] || []).length;
+        } else if (selectedSid !== null) {
+          const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, "i");
+          const instsForSid = rowsBySid[String(selectedSid)] || [];
+          const related = events.filter((e2) => {
+            const raw = e2.raw ?? "";
+            const msg = e2.message ?? "";
+            return sidRe.test(raw) || sidRe.test(msg);
+          });
+          const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
+          eventCount = related.length + frpForSid.length;
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          const newIndex = Math.min(focusedEventIndex + 1, eventCount - 1);
+          setFocusedEventIndex(newIndex);
+          setTimeout(() => {
+            const focusedEl = document.querySelector(".event-item.focused");
+            if (focusedEl)
+              focusedEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }, 10);
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          const newIndex = Math.max(focusedEventIndex - 1, 0);
+          setFocusedEventIndex(newIndex);
+          setTimeout(() => {
+            const focusedEl = document.querySelector(".event-item.focused");
+            if (focusedEl)
+              focusedEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }, 10);
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          setPanelFocus("table");
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [focusedRowIndex, focusedEventIndex, focusedTimelineItem, panelFocus, allTableRows, selectedSid, selectedDb, dbStates, events, failureProtocols, rowsBySid, addresses, groupsByAddress]);
   return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
     className: "app",
     children: [
@@ -17325,11 +17488,6 @@ function StackApp() {
             onClick: () => load(),
             disabled: loading,
             children: "Load"
-          }, undefined, false, undefined, this),
-          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-            style: { marginLeft: "auto" },
-            className: "hint",
-            children: "Drag range sliders to adjust selection window"
           }, undefined, false, undefined, this)
         ]
       }, undefined, true, undefined, this),
@@ -17351,7 +17509,13 @@ function StackApp() {
               Object.entries(dbStates).map(([db, segs]) => {
                 return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                   className: "stack-row",
-                  style: { opacity: 0.95 },
+                  style: { opacity: 0.95, cursor: "pointer", outline: focusedTimelineItem?.type === "db" && focusedTimelineItem?.key === db ? "2px solid rgba(43, 157, 244, 0.6)" : "none", outlineOffset: -2 },
+                  onClick: () => {
+                    setFocusedTimelineItem({ type: "db", key: db, index: 0 });
+                    setPanelFocus("timeline");
+                    setSelectedDb(db);
+                    setSelectedSid(null);
+                  },
                   children: [
                     /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                       className: "stack-label",
@@ -17372,12 +17536,14 @@ function StackApp() {
                           const right = (seg.end - globalStart) / (globalEnd - globalStart) * 100;
                           const width = Math.max(0.2, right - left);
                           const bg = stateColor(seg.state);
-                          const title = `${seg.state} — ${seg.iso}
+                          const tooltipContent = `${seg.state} — ${seg.iso}
 ${seg.message}`;
+                          const barId = `db-${db}-${idx}`;
                           return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                             className: "instance-bar db-bar",
-                            style: { left: `${left}%`, width: `${width}%`, background: bg },
-                            title
+                            style: { left: `${left}%`, width: `${width}%`, background: bg, anchorName: `--${barId}` },
+                            onMouseEnter: () => setHoveredBar({ type: "db", id: barId, content: tooltipContent }),
+                            onMouseLeave: () => setHoveredBar(null)
                           }, `dbseg-${db}-${idx}`, false, undefined, this);
                         })
                       ]
@@ -17462,8 +17628,10 @@ ${seg.message}`;
                       const hue = baseHue + hueVariation;
                       return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                         className: "stack-row layer",
-                        style: { cursor: "pointer" },
+                        style: { cursor: "pointer", outline: focusedTimelineItem?.type === "sid" && focusedTimelineItem?.key === sid ? "2px solid rgba(43, 157, 244, 0.6)" : "none", outlineOffset: -2 },
                         onClick: () => {
+                          setFocusedTimelineItem({ type: "sid", key: sid, index: 0 });
+                          setPanelFocus("timeline");
                           setSelectedSid(Number(sid));
                           setSelectedDb(null);
                         },
@@ -17480,28 +17648,59 @@ ${seg.message}`;
                                 style: { left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%` }
                               }, undefined, false, undefined, this),
                               procInst.map((inst, idx) => {
+                                const removeEvents = events.filter((e) => {
+                                  const msg = e.message ?? "";
+                                  const sidMatch = new RegExp(`\\bstartId=${sid}\\b`, "i").test(msg);
+                                  return sidMatch && /RemoveNodeCommand/.test(msg);
+                                });
+                                const hasNonGracefulRemoval = removeEvents.some((e) => !/Gracefully shutdown engine/i.test(e.message ?? ""));
+                                const effectiveEnd = removeEvents.length > 0 ? inst.end : globalEnd;
                                 const left = (inst.start - globalStart) / (globalEnd - globalStart) * 100;
-                                const right = (inst.end - globalStart) / (globalEnd - globalStart) * 100;
+                                const right = (effectiveEnd - globalStart) / (globalEnd - globalStart) * 100;
                                 const width = Math.max(0.2, right - left);
                                 const lit = baseLit + idx * 8 % 20 - 10;
                                 const style = { left: `${left}%`, width: `${width}%`, background: `hsl(${hue}deg ${baseSat}% ${lit}%)` };
+                                let tooltipContent = `sid=${inst.sid} ${inst.firstIso ?? ""} → ${removeEvents.length > 0 ? inst.lastIso ?? "" : "still running"}`;
+                                if (removeEvents.length > 0) {
+                                  tooltipContent += `
+
+RemoveNodeCommand events:`;
+                                  removeEvents.forEach((e) => {
+                                    tooltipContent += `
+${e.iso ?? ""}: ${e.message ?? ""}`;
+                                  });
+                                } else {
+                                  tooltipContent += `
+
+(No RemoveNodeCommand found - process still running)`;
+                                }
+                                const barId = `bar-${sid}-${idx}`;
                                 return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                                  className: "instance-bar",
-                                  title: `sid=${inst.sid} ${inst.firstIso ?? ""} → ${inst.lastIso ?? ""}`,
-                                  style
-                                }, `${sid}-${inst.sid}-${idx}`, false, undefined, this);
+                                  style: { position: "relative", left: `${left}%`, width: `${width}%`, height: "100%" },
+                                  children: [
+                                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                      className: "instance-bar",
+                                      style: { width: "100%", height: "100%", background: `hsl(${hue}deg ${baseSat}% ${lit}%)`, anchorName: `--${barId}` },
+                                      onMouseEnter: () => setHoveredBar({ type: "process", id: barId, content: tooltipContent }),
+                                      onMouseLeave: () => setHoveredBar(null)
+                                    }, undefined, false, undefined, this),
+                                    hasNonGracefulRemoval && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                      style: { position: "absolute", right: 0, top: "0", bottom: "0", width: "1.5px", background: "#ff4444", borderRadius: "0 2px 2px 0", zIndex: 5, pointerEvents: "none" }
+                                    }, undefined, false, undefined, this)
+                                  ]
+                                }, `${sid}-${inst.sid}-${idx}`, true, undefined, this);
                               }),
                               failureProtocols.filter((frp) => frp.sid === Number(sid)).map((frp, idx) => {
                                 const left = (frp.ts - globalStart) / (globalEnd - globalStart) * 100;
-                                const title = `FAILURE PROTOCOL
-${frp.iso}
-(${frp.dbName} node ${frp.node} iter ${frp.iteration})
-${frp.message}`;
+                                const tooltipContent = `${frp.iso}
+${frp.raw}`;
+                                const frpId = `frp-${sid}-${idx}`;
                                 return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                                   className: "frp-dot",
-                                  style: { left: `${left}%`, position: "absolute", top: "1px", width: 10, height: 10, background: "hsla(336, 68%, 38%, 1.00)", transform: "rotate(45deg)", zIndex: 10 },
-                                  title
-                                }, `frp-${sid}-${idx}`, false, undefined, this);
+                                  style: { left: `${left}%`, position: "absolute", top: "2px", width: 10, height: 10, background: "hsla(336, 68%, 38%, 1.00)", transform: "rotate(45deg)", zIndex: 10, anchorName: `--${frpId}` },
+                                  onMouseEnter: () => setHoveredBar({ type: "frp", id: frpId, content: tooltipContent }),
+                                  onMouseLeave: () => setHoveredBar(null)
+                                }, frpId, false, undefined, this);
                               })
                             ]
                           }, undefined, true, undefined, this)
@@ -17510,9 +17709,31 @@ ${frp.message}`;
                     })
                   ]
                 }, `group-${addr}`, true, undefined, this);
-              })
+              }),
+              ";"
             ]
           }, undefined, true, undefined, this),
+          hoveredBar && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+            style: {
+              position: "absolute",
+              positionAnchor: `--${hoveredBar.id}`,
+              top: "anchor(bottom)",
+              left: "anchor(center)",
+              translate: "-50% 8px",
+              background: "rgba(15, 30, 45, 0.98)",
+              border: "1px solid rgba(43, 157, 244, 0.4)",
+              borderRadius: 6,
+              padding: "8px 12px",
+              color: "#e6eef6",
+              fontSize: 13,
+              whiteSpace: "pre-wrap",
+              zIndex: 1000,
+              maxWidth: 600,
+              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.4)",
+              pointerEvents: "none"
+            },
+            children: hoveredBar.content
+          }, undefined, false, undefined, this),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
             style: { display: "flex", marginTop: 8, marginBottom: 12 },
             children: [
@@ -17677,10 +17898,14 @@ ${frp.message}`;
                   }, undefined, true, undefined, this),
                   /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tbody", {
                     children: [
-                      Object.keys(dbStates || {}).map((db) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
+                      Object.keys(dbStates || {}).map((db, dbIdx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
                         onClick: () => {
                           setSelectedDb(db);
                           setSelectedSid(null);
+                          setFocusedRowIndex(dbIdx);
+                          setPanelFocus("table");
+                          setFocusedEventIndex(0);
+                          setFocusedTimelineItem({ type: "db", key: db, index: 0 });
                         },
                         style: { cursor: "pointer", background: selectedDb === db ? "rgba(43, 157, 244, 0.1)" : undefined },
                         children: [
@@ -17702,31 +17927,38 @@ ${frp.message}`;
                           }, undefined, false, undefined, this)
                         ]
                       }, `db-${db}`, true, undefined, this)),
-                      visibleSorted.map((i, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
-                        onClick: () => {
-                          setSelectedSid(i.sid);
-                          setSelectedDb(null);
-                        },
-                        style: { cursor: "pointer", background: selectedSid === i.sid ? "rgba(43, 157, 244, 0.1)" : undefined },
-                        children: [
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            style: { color: "#bfe7ff" },
-                            children: i.sid
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            children: instanceType(i)
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            children: i.address ?? ""
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            children: i.firstIso ?? new Date(i.start).toISOString()
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            children: i.lastIso ?? new Date(i.end).toISOString()
-                          }, undefined, false, undefined, this)
-                        ]
-                      }, `row-${idx}`, true, undefined, this))
+                      visibleSorted.map((i, idx) => {
+                        const rowIndex = Object.keys(dbStates || {}).length + idx;
+                        return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
+                          onClick: () => {
+                            setSelectedSid(i.sid);
+                            setSelectedDb(null);
+                            setFocusedRowIndex(rowIndex);
+                            setPanelFocus("table");
+                            setFocusedEventIndex(0);
+                            setFocusedTimelineItem({ type: "sid", key: String(i.sid), index: 0 });
+                          },
+                          style: { cursor: "pointer", background: selectedSid === i.sid ? "rgba(43, 157, 244, 0.1)" : undefined },
+                          children: [
+                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                              style: { color: "#bfe7ff" },
+                              children: i.sid
+                            }, undefined, false, undefined, this),
+                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                              children: instanceType(i)
+                            }, undefined, false, undefined, this),
+                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                              children: i.address ?? ""
+                            }, undefined, false, undefined, this),
+                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                              children: i.firstIso ?? new Date(i.start).toISOString()
+                            }, undefined, false, undefined, this),
+                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                              children: i.lastIso ?? new Date(i.end).toISOString()
+                            }, undefined, false, undefined, this)
+                          ]
+                        }, `row-${idx}`, true, undefined, this);
+                      })
                     ]
                   }, undefined, true, undefined, this)
                 ]
@@ -17755,10 +17987,64 @@ ${frp.message}`;
                         }, undefined, false, undefined, this)
                       ]
                     }, undefined, true, undefined, this),
+                    function() {
+                      const dbEvents = dbStates[selectedDb] || [];
+                      if (dbEvents.length === 0) {
+                        return null;
+                      }
+                      const minTs = Math.min(...dbEvents.map((e) => e.start));
+                      const maxTs = Math.max(...dbEvents.map((e) => e.start));
+                      const timelineWidth = 380;
+                      return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                        style: { marginBottom: 12, padding: "8px 0" },
+                        children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: { position: "relative", height: 32, background: "#0a1e28", borderRadius: 4, padding: "0 10px" },
+                          children: [
+                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                              style: { position: "absolute", left: 10, right: 10, top: "50%", height: 2, background: "rgba(159, 180, 201, 0.3)", transform: "translateY(-50%)" }
+                            }, undefined, false, undefined, this),
+                            dbEvents.map((seg, idx) => {
+                              const pos = maxTs > minTs ? (seg.start - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
+                              const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+                              return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                title: seg.iso,
+                                style: {
+                                  position: "absolute",
+                                  left: 10 + pos,
+                                  top: "50%",
+                                  width: isSelected ? 12 : 8,
+                                  height: isSelected ? 12 : 8,
+                                  background: isSelected ? "#43bdff" : "#2b9df4",
+                                  transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
+                                  cursor: "pointer",
+                                  border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
+                                  zIndex: isSelected ? 10 : 1,
+                                  transition: "all 0.2s ease"
+                                },
+                                onClick: () => {
+                                  setFocusedEventIndex(idx);
+                                  setPanelFocus("events");
+                                  setTimeout(() => {
+                                    const elem = document.querySelectorAll(".event-item")[idx];
+                                    if (elem)
+                                      elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                                  }, 50);
+                                }
+                              }, idx, false, undefined, this);
+                            })
+                          ]
+                        }, undefined, true, undefined, this)
+                      }, undefined, false, undefined, this);
+                    }(),
                     /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                       style: { maxHeight: 480, overflow: "auto" },
                       children: (dbStates[selectedDb] || []).map((seg, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                        style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)" },
+                        className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+                        onClick: () => {
+                          setFocusedEventIndex(idx);
+                          setPanelFocus("events");
+                        },
+                        style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)", cursor: "pointer", background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : undefined },
                         children: [
                           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                             style: { fontSize: 12, color: "#9fb4c9" },
@@ -17795,6 +18081,65 @@ ${frp.message}`;
                         }, undefined, false, undefined, this)
                       ]
                     }, undefined, true, undefined, this),
+                    function() {
+                      const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, "i");
+                      const instsForSid = rowsBySid[String(selectedSid)] || [];
+                      const related = events.filter((e) => {
+                        const raw = e.raw ?? "";
+                        const msg = e.message ?? "";
+                        return sidRe.test(raw) || sidRe.test(msg);
+                      });
+                      related.sort((a, b) => a.ts - b.ts);
+                      const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
+                      const allEvents = [...related.map((ev) => ({ type: "event", ts: ev.ts, iso: ev.iso, message: ev.message })), ...frpForSid.map((frp) => ({ type: "frp", ts: frp.ts, iso: frp.iso, message: frp.raw }))];
+                      allEvents.sort((a, b) => a.ts - b.ts);
+                      if (allEvents.length === 0) {
+                        return null;
+                      }
+                      const minTs = Math.min(...allEvents.map((e) => e.ts));
+                      const maxTs = Math.max(...allEvents.map((e) => e.ts));
+                      const timelineWidth = 380;
+                      return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                        style: { marginBottom: 12, padding: "8px 0" },
+                        children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: { position: "relative", height: 32, background: "#0a1e28", borderRadius: 4, padding: "0 10px" },
+                          children: [
+                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                              style: { position: "absolute", left: 10, right: 10, top: "50%", height: 2, background: "rgba(159, 180, 201, 0.3)", transform: "translateY(-50%)" }
+                            }, undefined, false, undefined, this),
+                            allEvents.map((ev, idx) => {
+                              const pos = maxTs > minTs ? (ev.ts - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
+                              const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+                              return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                title: ev.iso,
+                                style: {
+                                  position: "absolute",
+                                  left: 10 + pos,
+                                  top: "50%",
+                                  width: isSelected ? 12 : 8,
+                                  height: isSelected ? 12 : 8,
+                                  background: isSelected ? ev.type === "frp" ? "#ff7070" : "#43bdff" : ev.type === "frp" ? "#ff5050" : "#2b9df4",
+                                  transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
+                                  cursor: "pointer",
+                                  border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
+                                  zIndex: isSelected ? 10 : 1,
+                                  transition: "all 0.2s ease"
+                                },
+                                onClick: () => {
+                                  setFocusedEventIndex(idx);
+                                  setPanelFocus("events");
+                                  setTimeout(() => {
+                                    const elem = document.querySelectorAll(".event-item")[idx];
+                                    if (elem)
+                                      elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                                  }, 50);
+                                }
+                              }, idx, false, undefined, this);
+                            })
+                          ]
+                        }, undefined, true, undefined, this)
+                      }, undefined, false, undefined, this);
+                    }(),
                     /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                       style: { maxHeight: 480, overflow: "auto" },
                       children: function() {
@@ -17809,21 +18154,40 @@ ${frp.message}`;
                         });
                         related.sort((a, b) => a.ts - b.ts);
                         const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
-                        const allEvents = [...related.map((ev) => ({ type: "event", ts: ev.ts, iso: ev.iso, message: ev.message })), ...frpForSid.map((frp) => ({ type: "frp", ts: frp.ts, iso: frp.iso, message: `[FAILURE PROTOCOL] (${frp.dbName} node ${frp.node} iter ${frp.iteration}) ${frp.message}` }))];
+                        const allEvents = [...related.map((ev) => ({ type: "event", ts: ev.ts, iso: ev.iso, message: ev.message })), ...frpForSid.map((frp) => ({ type: "frp", ts: frp.ts, iso: frp.iso, message: frp.raw.replace(/^\S+\s+/, "") }))];
                         allEvents.sort((a, b) => a.ts - b.ts);
-                        return allEvents.map((ev, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)", background: ev.type === "frp" ? "rgba(255, 80, 80, 0.05)" : undefined },
-                          children: [
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { fontSize: 12, color: "#9fb4c9" },
-                              children: ev.iso
-                            }, undefined, false, undefined, this),
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { fontSize: 13, color: ev.type === "frp" ? "#ffb3b3" : "#e6eef6", whiteSpace: "pre-wrap" },
-                              children: ev.message
-                            }, undefined, false, undefined, this)
-                          ]
-                        }, idx, true, undefined, this));
+                        return allEvents.map((ev, idx) => {
+                          const isRemoveNode = /RemoveNodeCommand/.test(ev.message);
+                          const reasonMatch = isRemoveNode ? ev.message.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
+                          const isGraceful = reasonMatch && /Gracefully shutdown engine/i.test(reasonMatch[0]);
+                          return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+                            onClick: () => {
+                              setFocusedEventIndex(idx);
+                              setPanelFocus("events");
+                            },
+                            style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)", cursor: "pointer", background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : ev.type === "frp" ? "rgba(255, 80, 80, 0.05)" : undefined },
+                            children: [
+                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                style: { fontSize: 12, color: "#9fb4c9" },
+                                children: ev.iso
+                              }, undefined, false, undefined, this),
+                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                style: { fontSize: 13, color: ev.type === "frp" ? "#ffb3b3" : "#e6eef6", whiteSpace: "pre-wrap" },
+                                children: isRemoveNode && reasonMatch ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV(jsx_dev_runtime.Fragment, {
+                                  children: [
+                                    ev.message.substring(0, reasonMatch.index),
+                                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                      style: { background: isGraceful ? "rgba(255, 200, 100, 0.2)" : "rgba(255, 80, 80, 0.2)", color: isGraceful ? "#ffdd99" : "#ffb3b3", padding: "2px 4px", borderRadius: 3, fontWeight: 600 },
+                                      children: reasonMatch[0]
+                                    }, undefined, false, undefined, this),
+                                    ev.message.substring(reasonMatch.index + reasonMatch[0].length)
+                                  ]
+                                }, undefined, true, undefined, this) : ev.message
+                              }, undefined, false, undefined, this)
+                            ]
+                          }, idx, true, undefined, this);
+                        });
                       }()
                     }, undefined, false, undefined, this)
                   ]
