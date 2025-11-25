@@ -17136,7 +17136,9 @@ function StackApp() {
   const [instances, setInstances] = import_react.useState([]);
   const [events, setEvents] = import_react.useState([]);
   const [dbStates, setDbStates] = import_react.useState({});
+  const [failureProtocols, setFailureProtocols] = import_react.useState([]);
   const [selectedSid, setSelectedSid] = import_react.useState(null);
+  const [selectedDb, setSelectedDb] = import_react.useState(null);
   const [rangeStart, setRangeStart] = import_react.useState(null);
   const [rangeEnd, setRangeEnd] = import_react.useState(null);
   const [globalStart, setGlobalStart] = import_react.useState(Date.now());
@@ -17147,6 +17149,11 @@ function StackApp() {
   const [filterSid, setFilterSid] = import_react.useState("");
   const [sortKey, setSortKey] = import_react.useState("sid");
   const [sortDir, setSortDir] = import_react.useState("asc");
+  const [cursorX, setCursorX] = import_react.useState(null);
+  const [dragging, setDragging] = import_react.useState(null);
+  const [dragStartX, setDragStartX] = import_react.useState(0);
+  const [dragStartRange, setDragStartRange] = import_react.useState({ start: 0, end: 0 });
+  const [rangeBarHover, setRangeBarHover] = import_react.useState(false);
   async function load(p = path) {
     setLoading(true);
     try {
@@ -17156,6 +17163,7 @@ function StackApp() {
       setInstances(insts.sort((a, b) => a.start - b.start));
       setEvents(json.events || []);
       setDbStates(json.dbStates || {});
+      setFailureProtocols(json.failureProtocols || []);
       if (json.range && json.range.start && json.range.end) {
         setGlobalStart(json.range.start);
         setGlobalEnd(json.range.end);
@@ -17181,6 +17189,49 @@ function StackApp() {
   const span = Math.max(1, (rangeEnd ?? globalEnd) - (rangeStart ?? globalStart));
   const gStart = rangeStart ?? globalStart;
   const gEnd = rangeEnd ?? globalEnd;
+  import_react.useEffect(() => {
+    if (!dragging)
+      return;
+    const handleMouseMove = (e) => {
+      const slider = document.querySelector(".range-slider-track");
+      if (!slider)
+        return;
+      const rect = slider.getBoundingClientRect();
+      const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const ts = globalStart + fraction * (globalEnd - globalStart);
+      if (dragging === "start") {
+        const currentEnd = rangeEnd ?? globalEnd;
+        setRangeStart(Math.min(ts, currentEnd));
+      } else if (dragging === "end") {
+        const currentStart = rangeStart ?? globalStart;
+        setRangeEnd(Math.max(ts, currentStart));
+      } else if (dragging === "range") {
+        const deltaX = e.clientX - dragStartX;
+        const deltaFraction = deltaX / rect.width;
+        const deltaTs = deltaFraction * (globalEnd - globalStart);
+        const span2 = dragStartRange.end - dragStartRange.start;
+        let newStart = dragStartRange.start + deltaTs;
+        let newEnd = dragStartRange.end + deltaTs;
+        if (newStart < globalStart) {
+          newStart = globalStart;
+          newEnd = globalStart + span2;
+        }
+        if (newEnd > globalEnd) {
+          newEnd = globalEnd;
+          newStart = globalEnd - span2;
+        }
+        setRangeStart(newStart);
+        setRangeEnd(newEnd);
+      }
+    };
+    const handleMouseUp = () => setDragging(null);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [dragging, globalStart, globalEnd, rangeStart, rangeEnd]);
   const visible = instances.filter((i) => i.end >= gStart && i.start <= gEnd);
   const rowsBySid = {};
   for (const inst of instances) {
@@ -17287,45 +17338,55 @@ function StackApp() {
         children: [
           Object.keys(dbStates || {}).length > 0 ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
             className: "stack-area",
-            style: { marginBottom: 6 },
-            children: Object.entries(dbStates).map(([db, segs]) => {
-              return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                className: "stack-row",
-                style: { opacity: 0.95 },
-                children: [
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                    className: "stack-label",
-                    children: [
-                      "DB ",
-                      db
-                    ]
-                  }, undefined, true, undefined, this),
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                    className: "stack-track",
-                    children: [
-                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                        className: "selection-overlay",
-                        style: { left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%` }
-                      }, undefined, false, undefined, this),
-                      segs.map((seg, idx) => {
-                        const left = (seg.start - globalStart) / (globalEnd - globalStart) * 100;
-                        const right = (seg.end - globalStart) / (globalEnd - globalStart) * 100;
-                        const width = Math.max(0.2, right - left);
-                        const bg = stateColor(seg.state);
-                        const title = `${seg.state} — ${seg.iso}
+            style: { position: "relative" },
+            onMouseMove: (e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setCursorX(e.clientX - rect.left);
+            },
+            onMouseLeave: () => setCursorX(null),
+            children: [
+              cursorX !== null && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                style: { position: "absolute", left: cursorX, top: 0, bottom: 0, width: 1, background: "rgba(255, 255, 255, 0.3)", pointerEvents: "none", zIndex: 100 }
+              }, undefined, false, undefined, this),
+              Object.entries(dbStates).map(([db, segs]) => {
+                return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  className: "stack-row",
+                  style: { opacity: 0.95 },
+                  children: [
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      className: "stack-label",
+                      children: [
+                        "DB ",
+                        db
+                      ]
+                    }, undefined, true, undefined, this),
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      className: "stack-track",
+                      children: [
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          className: "selection-overlay",
+                          style: { left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%` }
+                        }, undefined, false, undefined, this),
+                        segs.map((seg, idx) => {
+                          const left = (seg.start - globalStart) / (globalEnd - globalStart) * 100;
+                          const right = (seg.end - globalStart) / (globalEnd - globalStart) * 100;
+                          const width = Math.max(0.2, right - left);
+                          const bg = stateColor(seg.state);
+                          const title = `${seg.state} — ${seg.iso}
 ${seg.message}`;
-                        return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          className: "instance-bar db-bar",
-                          style: { left: `${left}%`, width: `${width}%`, background: bg },
-                          title
-                        }, `dbseg-${db}-${idx}`, false, undefined, this);
-                      })
-                    ]
-                  }, undefined, true, undefined, this)
-                ]
-              }, `db-${db}`, true, undefined, this);
-            })
-          }, undefined, false, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            className: "instance-bar db-bar",
+                            style: { left: `${left}%`, width: `${width}%`, background: bg },
+                            title
+                          }, `dbseg-${db}-${idx}`, false, undefined, this);
+                        })
+                      ]
+                    }, undefined, true, undefined, this)
+                  ]
+                }, `db-${db}`, true, undefined, this);
+              })
+            ]
+          }, undefined, true, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
             className: "stack-area",
             style: { marginBottom: 6 },
             children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
@@ -17349,108 +17410,155 @@ ${seg.message}`;
           }, undefined, false, undefined, this),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
             className: "stack-area",
-            children: addresses.map((addr) => {
-              const sids = groupsByAddress[addr] || [];
-              return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                children: [
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                    className: "stack-row",
-                    style: { opacity: 0.9, fontWeight: 600 },
-                    children: [
-                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                        className: "stack-label",
-                        style: { color: "white" },
-                        children: addr
-                      }, undefined, false, undefined, this),
-                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                        className: "stack-track"
-                      }, undefined, false, undefined, this)
-                    ]
-                  }, undefined, true, undefined, this),
-                  sids.map((sid) => {
-                    const procInst = (rowsBySid[sid] || []).sort((a, b) => a.start - b.start);
-                    const first = procInst[0];
-                    const anyType = procInst.find((x) => x.type && x.type.length > 0)?.type ?? undefined;
-                    const label = first ? `sid ${sid}${anyType ? " — " + anyType : ""}` : `sid ${sid}`;
-                    return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+            style: { position: "relative" },
+            onMouseMove: (e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setCursorX(e.clientX - rect.left);
+            },
+            onMouseLeave: () => setCursorX(null),
+            children: [
+              cursorX !== null && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                style: { position: "absolute", left: cursorX, top: 0, bottom: 0, width: 1, background: "rgba(255, 255, 255, 0.3)", pointerEvents: "none", zIndex: 100 }
+              }, undefined, false, undefined, this),
+              addresses.map((addr) => {
+                const sids = groupsByAddress[addr] || [];
+                return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  children: [
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                       className: "stack-row",
+                      style: { opacity: 0.9, fontWeight: 600 },
                       children: [
                         /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                           className: "stack-label",
-                          children: label
+                          style: { color: "white", fontSize: 10 },
+                          children: addr
                         }, undefined, false, undefined, this),
                         /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          className: "stack-track",
-                          children: [
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              className: "selection-overlay",
-                              style: { left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%` }
-                            }, undefined, false, undefined, this),
-                            procInst.map((inst, idx) => {
-                              const left = (inst.start - globalStart) / (globalEnd - globalStart) * 100;
-                              const right = (inst.end - globalStart) / (globalEnd - globalStart) * 100;
-                              const width = Math.max(0.2, right - left);
-                              const hue = Number(sid) * 41 % 360;
-                              const style = { left: `${left}%`, width: `${width}%`, background: `hsl(${hue}deg 60% 48%)` };
-                              return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                                className: "instance-bar",
-                                title: `sid=${inst.sid} ${inst.firstIso ?? ""} → ${inst.lastIso ?? ""}`,
-                                style
-                              }, `${sid}-${inst.sid}-${idx}`, false, undefined, this);
-                            })
-                          ]
-                        }, undefined, true, undefined, this)
+                          className: "stack-track"
+                        }, undefined, false, undefined, this)
                       ]
-                    }, `sidrow-${sid}`, true, undefined, this);
-                  })
-                ]
-              }, `group-${addr}`, true, undefined, this);
-            })
-          }, undefined, false, undefined, this),
+                    }, undefined, true, undefined, this),
+                    sids.map((sid, sidIndexInGroup) => {
+                      const procInst = (rowsBySid[sid] || []).sort((a, b) => a.start - b.start);
+                      const first = procInst[0];
+                      const anyType = procInst.find((x) => x.type && x.type.length > 0)?.type ?? undefined;
+                      const label = first ? `sid ${sid}${anyType ? " — " + anyType : ""}` : `sid ${sid}`;
+                      let baseHue = 200;
+                      let baseSat = 50;
+                      let baseLit = 48;
+                      if (anyType === "SM") {
+                        baseHue = 210;
+                        baseSat = 70;
+                      } else if (anyType === "TE") {
+                        baseHue = 35;
+                        baseSat = 78;
+                      }
+                      const hueVariation = anyType === "TE" ? sidIndexInGroup * 3 % 40 - 7 : anyType === "SM" ? sidIndexInGroup * 15 % 60 - 30 : 0;
+                      if (!anyType || anyType !== "TE" && anyType !== "SM") {
+                        baseHue = 270;
+                        baseSat = 60;
+                        baseLit = 50;
+                      }
+                      const hue = baseHue + hueVariation;
+                      return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                        className: "stack-row layer",
+                        style: { cursor: "pointer" },
+                        onClick: () => {
+                          setSelectedSid(Number(sid));
+                          setSelectedDb(null);
+                        },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            className: "stack-label",
+                            children: label
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            className: "stack-track",
+                            children: [
+                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                className: "selection-overlay",
+                                style: { left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%` }
+                              }, undefined, false, undefined, this),
+                              procInst.map((inst, idx) => {
+                                const left = (inst.start - globalStart) / (globalEnd - globalStart) * 100;
+                                const right = (inst.end - globalStart) / (globalEnd - globalStart) * 100;
+                                const width = Math.max(0.2, right - left);
+                                const lit = baseLit + idx * 8 % 20 - 10;
+                                const style = { left: `${left}%`, width: `${width}%`, background: `hsl(${hue}deg ${baseSat}% ${lit}%)` };
+                                return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                  className: "instance-bar",
+                                  title: `sid=${inst.sid} ${inst.firstIso ?? ""} → ${inst.lastIso ?? ""}`,
+                                  style
+                                }, `${sid}-${inst.sid}-${idx}`, false, undefined, this);
+                              }),
+                              failureProtocols.filter((frp) => frp.sid === Number(sid)).map((frp, idx) => {
+                                const left = (frp.ts - globalStart) / (globalEnd - globalStart) * 100;
+                                const title = `FAILURE PROTOCOL
+${frp.iso}
+(${frp.dbName} node ${frp.node} iter ${frp.iteration})
+${frp.message}`;
+                                return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                  className: "frp-dot",
+                                  style: { left: `${left}%`, position: "absolute", top: "1px", width: 10, height: 10, background: "hsla(336, 68%, 38%, 1.00)", transform: "rotate(45deg)", zIndex: 10 },
+                                  title
+                                }, `frp-${sid}-${idx}`, false, undefined, this);
+                              })
+                            ]
+                          }, undefined, true, undefined, this)
+                        ]
+                      }, `sidrow-${sid}`, true, undefined, this);
+                    })
+                  ]
+                }, `group-${addr}`, true, undefined, this);
+              })
+            ]
+          }, undefined, true, undefined, this),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-            style: { marginTop: 12, display: "flex", alignItems: "center", gap: 12 },
-            className: "range-controls",
+            style: { display: "flex", marginTop: 8, marginBottom: 12 },
             children: [
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
-                className: "hint",
-                children: "Start:"
-              }, undefined, false, undefined, this),
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
-                type: "range",
-                min: globalStart,
-                max: globalEnd,
-                value: gStart,
-                onChange: (e) => {
-                  const v = Number(e.target.value);
-                  const endVal = Math.max(v, rangeEnd ?? globalEnd);
-                  setRangeStart(v);
-                  setRangeEnd(endVal);
-                }
-              }, undefined, false, undefined, this),
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
-                className: "hint",
-                children: "End:"
-              }, undefined, false, undefined, this),
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
-                type: "range",
-                min: globalStart,
-                max: globalEnd,
-                value: gEnd,
-                onChange: (e) => {
-                  const v = Number(e.target.value);
-                  const startVal = Math.min(v, rangeStart ?? globalStart);
-                  setRangeEnd(v);
-                  setRangeStart(startVal);
-                }
+              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                style: { width: "var(--label-width)", flexShrink: 0 }
               }, undefined, false, undefined, this),
               /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                style: { marginLeft: 12 },
-                className: "hint",
+                className: "range-slider-track",
+                style: { flex: 1, position: "relative", height: 40 },
                 children: [
-                  "Range: ",
-                  new Date(gStart).toISOString(),
-                  " → ",
-                  new Date(gEnd).toISOString()
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: { position: "absolute", top: 12, left: 0, right: 0, height: 4, background: "#1b2b3a", borderRadius: 2 },
+                    children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { position: "absolute", left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%`, height: rangeBarHover ? "8px" : "100%", top: rangeBarHover ? "-2px" : 0, background: "rgba(46, 204, 113, 0.4)", borderRadius: 2, cursor: "grab", transition: "height 0.15s ease, top 0.15s ease" },
+                      onMouseEnter: () => setRangeBarHover(true),
+                      onMouseLeave: () => setRangeBarHover(false),
+                      onMouseDown: (e) => {
+                        e.preventDefault();
+                        setDragging("range");
+                        setDragStartX(e.clientX);
+                        setDragStartRange({ start: gStart, end: gEnd });
+                      }
+                    }, undefined, false, undefined, this)
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: { position: "absolute", left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, top: 8, width: 12, height: 12, background: "#fff", border: "2px solid var(--accent)", borderRadius: "50%", cursor: "ew-resize", zIndex: 2 },
+                    onMouseDown: (e) => {
+                      e.preventDefault();
+                      setDragging("start");
+                    }
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: { position: "absolute", left: `${(gEnd - globalStart) / (globalEnd - globalStart) * 100}%`, top: 8, width: 12, height: 12, background: "#fff", border: "2px solid var(--accent)", borderRadius: "50%", cursor: "ew-resize", zIndex: 2 },
+                    onMouseDown: (e) => {
+                      e.preventDefault();
+                      setDragging("end");
+                    }
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: { position: "absolute", top: 24, left: 0, right: 0, fontSize: 11, color: "#7da3b8", textAlign: "center" },
+                    children: [
+                      new Date(gStart).toISOString(),
+                      " → ",
+                      new Date(gEnd).toISOString()
+                    ]
+                  }, undefined, true, undefined, this)
                 ]
               }, undefined, true, undefined, this)
             ]
@@ -17568,37 +17676,107 @@ ${seg.message}`;
                     ]
                   }, undefined, true, undefined, this),
                   /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tbody", {
-                    children: visibleSorted.map((i, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
-                      onClick: () => setSelectedSid(i.sid),
-                      style: { cursor: "pointer" },
-                      children: [
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                          style: { color: "#bfe7ff" },
-                          children: i.sid
-                        }, undefined, false, undefined, this),
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                          children: instanceType(i)
-                        }, undefined, false, undefined, this),
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                          children: i.address ?? ""
-                        }, undefined, false, undefined, this),
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                          children: i.firstIso ?? new Date(i.start).toISOString()
-                        }, undefined, false, undefined, this),
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                          children: i.lastIso ?? new Date(i.end).toISOString()
-                        }, undefined, false, undefined, this)
-                      ]
-                    }, `row-${idx}`, true, undefined, this))
-                  }, undefined, false, undefined, this)
+                    children: [
+                      Object.keys(dbStates || {}).map((db) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
+                        onClick: () => {
+                          setSelectedDb(db);
+                          setSelectedSid(null);
+                        },
+                        style: { cursor: "pointer", background: selectedDb === db ? "rgba(43, 157, 244, 0.1)" : undefined },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            style: { color: "#9fb4c9" },
+                            children: "—"
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            style: { color: "#9fb4c9" },
+                            children: "Database"
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            children: db
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            colSpan: 2,
+                            style: { fontSize: 12, color: "#7da3b8" },
+                            children: "Click to view state transitions"
+                          }, undefined, false, undefined, this)
+                        ]
+                      }, `db-${db}`, true, undefined, this)),
+                      visibleSorted.map((i, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
+                        onClick: () => {
+                          setSelectedSid(i.sid);
+                          setSelectedDb(null);
+                        },
+                        style: { cursor: "pointer", background: selectedSid === i.sid ? "rgba(43, 157, 244, 0.1)" : undefined },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            style: { color: "#bfe7ff" },
+                            children: i.sid
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            children: instanceType(i)
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            children: i.address ?? ""
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            children: i.firstIso ?? new Date(i.start).toISOString()
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
+                            children: i.lastIso ?? new Date(i.end).toISOString()
+                          }, undefined, false, undefined, this)
+                        ]
+                      }, `row-${idx}`, true, undefined, this))
+                    ]
+                  }, undefined, true, undefined, this)
                 ]
               }, undefined, true, undefined, this),
               /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                 style: { width: 420, background: "#05131a", border: "1px solid #12303a", borderRadius: 6, padding: 8 },
-                children: selectedSid === null ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                children: selectedSid === null && selectedDb === null ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                   style: { color: "#7da3b8" },
-                  children: "Click a row to see events for that sid"
-                }, undefined, false, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  children: "Click a row to see events"
+                }, undefined, false, undefined, this) : selectedDb !== null ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  children: [
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+                      children: [
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: { fontWeight: 600 },
+                          children: [
+                            "Database state transitions: ",
+                            selectedDb
+                          ]
+                        }, undefined, true, undefined, this),
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                          onClick: () => setSelectedDb(null),
+                          style: { background: "#0b2b34", color: "#9fb4c9", border: "none", padding: "6px 8px", borderRadius: 4, cursor: "pointer" },
+                          children: "Close"
+                        }, undefined, false, undefined, this)
+                      ]
+                    }, undefined, true, undefined, this),
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { maxHeight: 480, overflow: "auto" },
+                      children: (dbStates[selectedDb] || []).map((seg, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                        style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)" },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: { fontSize: 12, color: "#9fb4c9" },
+                            children: seg.iso
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: { fontSize: 13, color: "#e6eef6", fontWeight: 600 },
+                            children: seg.state
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: { fontSize: 12, color: "#cfe6f7", whiteSpace: "pre-wrap", marginTop: 2 },
+                            children: seg.message
+                          }, undefined, false, undefined, this)
+                        ]
+                      }, idx, true, undefined, this))
+                    }, undefined, false, undefined, this)
+                  ]
+                }, undefined, true, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                   children: [
                     /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                       style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
@@ -17620,36 +17798,28 @@ ${seg.message}`;
                     /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                       style: { maxHeight: 480, overflow: "auto" },
                       children: function() {
-                        const sidRe = new RegExp(`\\b(?:startIds|startId|start-id|sid)[:=\\[]?\\s*${selectedSid}\\b`, "i");
+                        const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, "i");
                         const instsForSid = rowsBySid[String(selectedSid)] || [];
                         const adminProcs = Array.from(new Set(instsForSid.map((i) => i.process)));
                         const intervals = instsForSid.map((i) => ({ start: i.start, end: i.end }));
                         const related = events.filter((e) => {
                           const raw = e.raw ?? "";
                           const msg = e.message ?? "";
-                          if (sidRe.test(raw) || sidRe.test(msg))
-                            return true;
-                          if (adminProcs.includes(e.process)) {
-                            const adminTokenRe = /\b(connectKey|hostAndPort|address|startIds?|start-id|startId|Applied StartNodes?|Applying StartNodes?|Applied StartNodeCommand|Applying StartNodeCommand|RemoveNodeCommand|ShutdownNodesCommand|Applied RemoveNodeCommand|Applied ShutdownNodesCommand)\b/i;
-                            if (adminTokenRe.test(raw) || adminTokenRe.test(msg)) {
-                              for (const iv of intervals) {
-                                if (e.ts >= iv.start && e.ts <= iv.end)
-                                  return true;
-                              }
-                            }
-                          }
-                          return false;
+                          return sidRe.test(raw) || sidRe.test(msg);
                         });
                         related.sort((a, b) => a.ts - b.ts);
-                        return related.map((ev, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)" },
+                        const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
+                        const allEvents = [...related.map((ev) => ({ type: "event", ts: ev.ts, iso: ev.iso, message: ev.message })), ...frpForSid.map((frp) => ({ type: "frp", ts: frp.ts, iso: frp.iso, message: `[FAILURE PROTOCOL] (${frp.dbName} node ${frp.node} iter ${frp.iteration}) ${frp.message}` }))];
+                        allEvents.sort((a, b) => a.ts - b.ts);
+                        return allEvents.map((ev, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)", background: ev.type === "frp" ? "rgba(255, 80, 80, 0.05)" : undefined },
                           children: [
                             /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                               style: { fontSize: 12, color: "#9fb4c9" },
                               children: ev.iso
                             }, undefined, false, undefined, this),
                             /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { fontSize: 13, color: "#e6eef6", whiteSpace: "pre-wrap" },
+                              style: { fontSize: 13, color: ev.type === "frp" ? "#ffb3b3" : "#e6eef6", whiteSpace: "pre-wrap" },
                               children: ev.message
                             }, undefined, false, undefined, this)
                           ]
@@ -17687,6 +17857,3 @@ function stateColor(state) {
 assert(document);
 var root = import_client.createRoot(document.getElementById("root"));
 root.render(/* @__PURE__ */ jsx_dev_runtime.jsxDEV(StackApp, {}, undefined, false, undefined, this));
-
-//# debugId=9516A2C49025AEFF64756E2164756E21
-//# sourceMappingURL=app.js.map

@@ -15,6 +15,8 @@ const sidTypeMap: Record<number, string> = {};
 const sidAddressMap: Record<number, string> = {};
 type DbStateEvent = { dbName: string; ts: number; iso: string; state: string; message: string; raw: string };
 let dbStateEvents: DbStateEvent[] = [];
+type FailureProtocolEvent = { dbName: string; sid: number; node: number; iteration: number; ts: number; iso: string; message: string; raw: string };
+let failureProtocolEvents: FailureProtocolEvent[] = [];
 
 type LogEvent = { ts: number; iso: string; process: string; message: string; raw: string };
 
@@ -103,6 +105,29 @@ function buildByProcess(events: LogEvent[]) {
 	return byProcess;
 }
 
+function parseFailureProtocolLines(text: string): FailureProtocolEvent[] {
+	const lines = text.split(/\r?\n/);
+	const frpEvents: FailureProtocolEvent[] = [];
+	// Match lines like: 2025-11-20T12:09:13.432+0000 [47] (sofdb sid:3 node 4) Failure resolution protocol (iteration 1): ...
+	// Note: Some logs may not have INFO/WARN level, so make it optional
+	const re = /^(\S+)\s+(?:\S+\s+)?\[([^\]]+)\]\s+\((\S+)\s+sid:(\d+)\s+node\s+(\d+)\)\s+Failure resolution protocol\s+\(iteration\s+(\d+)\):\s+(.*)$/;
+	for (const raw of lines) {
+		const m = raw.match(re);
+		if (!m) continue;
+		const iso = m[1] ?? '';
+		const dbName = m[3] ?? 'unknown';
+		const sid = Number(m[4] ?? 0);
+		const node = Number(m[5] ?? 0);
+		const iteration = Number(m[6] ?? 0);
+		const message = m[7] ?? '';
+		const ts = Date.parse(iso);
+		if (Number.isNaN(ts)) continue;
+		frpEvents.push({ dbName, sid, node, iteration, ts, iso, message, raw });
+	}
+	frpEvents.sort((a, b) => a.ts - b.ts);
+	return frpEvents;
+}
+
 async function handleEvents(request: any) {
 	const url = new URL(request.url);
 	const path = url.searchParams.get("path") || DEFAULT_LOG;
@@ -115,7 +140,9 @@ async function handleEvents(request: any) {
 		for (const k of Object.keys(sidTypeMap)) delete (sidTypeMap as any)[k];
 		for (const k of Object.keys(sidAddressMap)) delete (sidAddressMap as any)[k];
 		dbStateEvents = [];
+		failureProtocolEvents = [];
 		const events = parseDomainLines(text);
+		const frpEvents = parseFailureProtocolLines(text);
 		const byProcess = buildByProcess(events);
 		// Build map of which sids have an authoritative start
 		const sidHasStart: Record<number, boolean> = {};
@@ -171,7 +198,9 @@ async function handleEvents(request: any) {
 			}
 			dbStates[db] = segs;
 		}
-		return new Response(JSON.stringify({ events, byProcess, instances, dbStates, range: { start: first?.ts ?? null, end: last?.ts ?? null } }, null, 2), {
+		// Build failure protocol events list (keep them as individual events for timeline rendering)
+		const failureProtocols = frpEvents.map(e => ({ dbName: e.dbName, sid: e.sid, node: e.node, iteration: e.iteration, ts: e.ts, iso: e.iso, message: e.message, raw: e.raw }));
+		return new Response(JSON.stringify({ events, byProcess, instances, dbStates, failureProtocols, range: { start: first?.ts ?? null, end: last?.ts ?? null } }, null, 2), {
 			headers: { "Content-Type": "application/json" },
 		});
 	} catch (err) {
