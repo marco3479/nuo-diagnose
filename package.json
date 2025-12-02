@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "bun ./nuoadmin-diagnose.ts",
     "build": "bun build src_ui/app.tsx --outdir public --sourcemap=linked --target browser --format esm",
-    "watch": "bun build src_ui/app.tsx --outdir public --watch --target browser --format esm"
+    "watch": "bun build src_ui/app.tsx --outdir public --watch --target browser --format esm",
+    "test": "bun test"
   },
   "engines": {
     "bun": ">=1.0.0"

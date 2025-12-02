@@ -18,9 +18,9 @@ let dbStateEvents: DbStateEvent[] = [];
 type FailureProtocolEvent = { dbName: string; sid: number; node: number; iteration: number; ts: number; iso: string; message: string; raw: string };
 let failureProtocolEvents: FailureProtocolEvent[] = [];
 
-type LogEvent = { ts: number; iso: string; process: string; message: string; raw: string };
+type LogEvent = { ts: number; iso: string; process: string; message: string; raw: string; fileSource?: string };
 
-function parseDomainLines(text: string): LogEvent[] {
+function parseDomainLines(text: string, fileSource?: string): LogEvent[] {
 	const lines = text.split(/\r?\n/);
 	const events: LogEvent[] = [];
 
@@ -46,7 +46,7 @@ function parseDomainLines(text: string): LogEvent[] {
 			const instType = typeMatch ? typeMatch[1] : undefined;
 			const instAddr = (hostAndPortMatch && hostAndPortMatch[1]) || (addressMatch && addressMatch[1]) || (ipPortMatch && ipPortMatch[1]) || undefined;
 
-		events.push({ ts, iso, process, message, raw });
+		events.push({ ts, iso, process, message, raw, fileSource });
 
 		// Capture database state transitions
 		// Prefer the "to" (target) state. We attempt a primary pattern that spans the line,
@@ -209,30 +209,292 @@ async function handleEvents(request: any) {
 	}
 }
 
+// Handler to list ZD ticket directories
+async function handleListTickets(request: any) {
+	const DASSAULT_PATH = "/support/tickets/dassault";
+	try {
+		const fs = await import('fs/promises');
+		const dirents = await fs.readdir(DASSAULT_PATH, { withFileTypes: true });
+		console.log(`[handleListTickets] Total dirents: ${dirents.length}`);
+		const zdAll = dirents.filter(d => d.name.startsWith('zd'));
+		console.log(`[handleListTickets] Items starting with zd: ${zdAll.length}`);
+		const tickets = dirents
+			.filter(d => d.isDirectory() && d.name.startsWith('zd'))
+			.map(d => d.name)
+			.sort();
+		console.log(`[handleListTickets] Filtered tickets (isDirectory + zd): ${tickets.length}`);
+		console.log(`[handleListTickets] First 3 tickets:`, tickets.slice(0, 3));
+		return new Response(JSON.stringify({ tickets }), { headers: { "Content-Type": "application/json" } });
+	} catch (err) {
+		const msg = err && typeof err === "object" && "message" in err ? (err as any).message : String(err);
+		return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
+	}
+}
+
+// Handler to list diagnose packages in a ZD ticket
+async function handleListDiagnosePackages(request: any) {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get("ticket");
+	if (!ticket) return new Response(JSON.stringify({ error: "Missing ticket parameter" }), { status: 400, headers: { "Content-Type": "application/json" } });
+	
+	const ticketPath = `/support/tickets/dassault/${ticket}`;
+	try {
+		const fs = await import('fs/promises');
+		const dirents = await fs.readdir(ticketPath, { withFileTypes: true });
+		const packages = dirents
+			.filter(d => d.isDirectory() && d.name.startsWith('diagnose-'))
+			.map(d => d.name)
+			.sort()
+			.reverse(); // newest first
+		return new Response(JSON.stringify({ packages }), { headers: { "Content-Type": "application/json" } });
+	} catch (err) {
+		const msg = err && typeof err === "object" && "message" in err ? (err as any).message : String(err);
+		return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
+	}
+}
+
+// Handler to list servers in a diagnose package
+async function handleListServers(request: any) {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get("ticket");
+	const pkg = url.searchParams.get("package");
+	if (!ticket || !pkg) return new Response(JSON.stringify({ error: "Missing ticket or package parameter" }), { status: 400, headers: { "Content-Type": "application/json" } });
+	
+	const adminPath = `/support/tickets/dassault/${ticket}/${pkg}/admin`;
+	try {
+		const fs = await import('fs/promises');
+		const dirents = await fs.readdir(adminPath, { withFileTypes: true });
+		const servers = dirents
+			.filter(d => d.isDirectory())
+			.map(d => d.name)
+			.sort();
+		return new Response(JSON.stringify({ servers }), { headers: { "Content-Type": "application/json" } });
+	} catch (err) {
+		const msg = err && typeof err === "object" && "message" in err ? (err as any).message : String(err);
+		return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
+	}
+}
+
+// Handler to load diagnose logs
+async function handleLoadDiagnose(request: any) {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get("ticket");
+	const pkg = url.searchParams.get("package");
+	const server = url.searchParams.get("server");
+	if (!ticket || !pkg || !server) return new Response(JSON.stringify({ error: "Missing ticket, package, or server parameter" }), { status: 400, headers: { "Content-Type": "application/json" } });
+	
+	const serverPath = `/support/tickets/dassault/${ticket}/${pkg}/admin/${server}`;
+	try {
+		// Find all nuoadmin.log* files
+		const files = await Array.fromAsync(new Bun.Glob("nuoadmin.log*").scan({ cwd: serverPath, onlyFiles: true }));
+		
+		// Sort files: nuoadmin.log, then .1, .2, etc. (highest number = oldest)
+		const sortedFiles = (files as string[]).sort((a, b) => {
+			if (a === 'nuoadmin.log') return -1;
+			if (b === 'nuoadmin.log') return 1;
+			const aNum = parseInt(a.replace('nuoadmin.log.', ''));
+			const bNum = parseInt(b.replace('nuoadmin.log.', ''));
+			return aNum - bNum;
+		});
+		
+		// Read all files in order (oldest to newest)
+		const reversedFiles = sortedFiles.reverse();
+		
+		// Parse each file separately to track source
+		const allEvents: LogEvent[] = [];
+		const fileSourceMap: Record<number, string> = {}; // track which file each event came from
+		
+		for (const file of reversedFiles) {
+			const filePath = `${serverPath}/${file}`;
+			const fileContent = await Bun.file(filePath).text();
+			const fileEvents = parseDomainLines(fileContent, file);
+			// Add file source to each event
+			for (const ev of fileEvents) {
+				fileSourceMap[allEvents.length] = file;
+				allEvents.push(ev);
+			}
+		}
+		
+		// Now use the combined events for parsing state
+		startIdOccurrences = [];
+		for (const k of Object.keys(sidTypeMap)) delete (sidTypeMap as any)[k];
+		for (const k of Object.keys(sidAddressMap)) delete (sidAddressMap as any)[k];
+		dbStateEvents = [];
+		failureProtocolEvents = [];
+		
+		// Re-parse the combined text for failure protocols (they need full text)
+		let combinedText = '';
+		for (const file of reversedFiles) {
+			const filePath = `${serverPath}/${file}`;
+			const fileContent = await Bun.file(filePath).text();
+			combinedText += `\n${fileContent}`;
+		}
+		
+		const frpEvents = parseFailureProtocolLines(combinedText);
+		
+		// Process events for instances (reuse parsed events)
+		const events = allEvents;
+		
+		// Extract sid/db info from events (same logic as parseDomainLines but reusing parsed events)
+		for (const e of events) {
+			const raw = e.raw;
+			const message = e.message;
+			
+			const sidMatch = message.match(/\b(?:startId|start-id|sid)=(\d+)\b/i) || raw.match(/\b(?:startId|start-id|sid)=(\d+)\b/i);
+			const sid = sidMatch ? Number(sidMatch[1]) : null;
+			const typeMatch = message.match(/\btype=([A-Z]{2,3})\b/);
+			const hostAndPortMatch = message.match(/hostAndPort=([^,\s]+)/);
+			const addressMatch = message.match(/\baddress=([^,\s]+)/);
+			const ipPortMatch = message.match(/(\d+\.\d+\.\d+\.\d+:\d+)/);
+			const instType = typeMatch ? typeMatch[1] : undefined;
+			const instAddr = (hostAndPortMatch && hostAndPortMatch[1]) || (addressMatch && addressMatch[1]) || (ipPortMatch && ipPortMatch[1]) || undefined;
+			
+			// Capture database state transitions (same logic as before)
+			let capturedDb = false;
+			{
+				const primary = message.match(/Updated database from DatabaseInfo\{name=([^,}]+)[\s\S]*?to DatabaseInfo\{[^}]*state=([A-Za-z_]+)/i);
+				if (primary) {
+					const dbName = primary[1] || 'unknown';
+					const state = (primary[2] || '').toUpperCase();
+					if (state) { dbStateEvents.push({ dbName, ts: e.ts, iso: e.iso, state, message, raw }); capturedDb = true; }
+				}
+			}
+			if (!capturedDb && /Updated database/i.test(message)) {
+				const allStates = Array.from(message.matchAll(/\bstate=([A-Za-z_]+)\b/ig));
+				if (allStates.length > 0) {
+					const last = allStates[allStates.length - 1];
+					const state = (last && last[1] ? last[1] : '').toUpperCase();
+					const nameTo = message.match(/to DatabaseInfo\{[^}]*name=([^,}]+)/i);
+					const nameAny = nameTo || message.match(/\bname=([^,}\s]+)/i) || message.match(/Updated database\s+([^\s,]+)/i);
+					const dbName = nameAny && nameAny[1] ? nameAny[1] : 'unknown';
+					if (state) { dbStateEvents.push({ dbName, ts: e.ts, iso: e.iso, state, message, raw }); capturedDb = true; }
+				}
+			}
+			
+			// attach sid occurrences
+			if (sid !== null) {
+				if (instType) sidTypeMap[sid] = sidTypeMap[sid] || instType;
+				if (instAddr) sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
+				const isAppliedStart = /\bApplied\s+StartNodes?Command\b/i.test(message);
+				const isRemoveOrShutdown = /\b(RemoveNodeCommand|ShutdownNodesCommand|ShutdownNodeCommand)\b/i.test(message);
+				const isDomainResponse = /DomainProcessCommandResponse/.test(message);
+				if (isAppliedStart || isRemoveOrShutdown || /\bApplying\s+RemoveNodeCommand\b/i.test(message) || /\bApplying\s+ShutdownNodesCommand\b/i.test(message) || isDomainResponse && isRemoveOrShutdown) {
+					startIdOccurrences.push({ process: e.process, sid, ts: e.ts, iso: e.iso, raw, type: instType || sidTypeMap[sid], address: instAddr || sidAddressMap[sid], isStart: !!isAppliedStart });
+				}
+			}
+		}
+		
+		const byProcess = buildByProcess(events);
+		
+		// Build map of which sids have an authoritative start
+		const sidHasStart: Record<number, boolean> = {};
+		for (const occ of startIdOccurrences) {
+			if (occ.isStart) sidHasStart[occ.sid] = true;
+		}
+		
+		// build instances from startId occurrences
+		const instancesMap: Record<string, { process: string; sid: number; start: number; end: number; firstIso?: string; lastIso?: string; type?: string; address?: string }> = {};
+		for (const occ of startIdOccurrences) {
+			const key = `${occ.process}:${occ.sid}`;
+			if (!instancesMap[key]) instancesMap[key] = { process: occ.process, sid: occ.sid, start: occ.ts, end: occ.ts, firstIso: occ.iso, lastIso: occ.iso, type: occ.type, address: occ.address };
+			else {
+				const cur = instancesMap[key];
+				if (occ.ts < cur.start) { cur.start = occ.ts; cur.firstIso = occ.iso; }
+				if (occ.ts > cur.end) { cur.end = occ.ts; cur.lastIso = occ.iso; }
+				if (!cur.type && occ.type) cur.type = occ.type;
+				if (!cur.address && occ.address) cur.address = occ.address;
+			}
+		}
+		
+		const first = events[0];
+		const last = events[events.length - 1];
+		
+		if (first && events.length > 0) {
+			for (const [key, inst] of Object.entries(instancesMap)) {
+				const sid = inst.sid;
+				if (!sidHasStart[sid]) {
+					inst.start = Math.min(inst.start, first.ts);
+					inst.firstIso = first.iso;
+				}
+			}
+		}
+		
+		for (const i of Object.values(instancesMap)) {
+			if (!i.type && sidTypeMap[i.sid]) i.type = sidTypeMap[i.sid];
+			if (!i.address && sidAddressMap[i.sid]) i.address = sidAddressMap[i.sid];
+		}
+		
+		const instances = Object.values(instancesMap).map(i => ({ process: i.process, sid: i.sid, start: i.start, end: i.end, firstIso: i.firstIso, lastIso: i.lastIso, type: i.type, address: i.address }));
+		
+		// Build DB state segments
+		const dbStates: Record<string, Array<{ state: string; start: number; end: number; iso: string; message: string }>> = {};
+		const byDb: Record<string, DbStateEvent[]> = {};
+		for (const e of dbStateEvents) {
+			(byDb[e.dbName] ||= []).push(e);
+		}
+		for (const [db, arr] of Object.entries(byDb)) {
+			arr.sort((a,b)=>a.ts-b.ts);
+			if (!arr.length) { dbStates[db] = []; continue; }
+			const segs: Array<{ state: string; start: number; end: number; iso: string; message: string }> = [];
+			for (let i=0;i<arr.length;i++) {
+				const cur = arr[i]!;
+				const next = arr[i+1];
+				segs.push({ state: cur.state, start: cur.ts, end: next ? next.ts : (last?.ts ?? (cur.ts+1)), iso: cur.iso, message: cur.message });
+			}
+			dbStates[db] = segs;
+		}
+		
+		const failureProtocols = frpEvents.map(e => ({ dbName: e.dbName, sid: e.sid, node: e.node, iteration: e.iteration, ts: e.ts, iso: e.iso, message: e.message, raw: e.raw }));
+		
+		return new Response(JSON.stringify({ 
+			events, 
+			byProcess, 
+			instances, 
+			dbStates, 
+			failureProtocols, 
+			range: { start: first?.ts ?? null, end: last?.ts ?? null },
+			server,
+			multiFile: true
+		}, null, 2), {
+			headers: { "Content-Type": "application/json" },
+		});
+	} catch (err) {
+		const msg = err && typeof err === "object" && "message" in err ? (err as any).message : String(err);
+		return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
+	}
+}
+
 // Serve static files from ./public and the events endpoint
 const PORT = Number(process.env.PORT) || 8080;
 console.log(`Starting Bun server on http://localhost:${PORT} — serving ./public and /events.json`);
 
 Bun.serve({
 	port: PORT,
-	fetch(req: any) {
+	fetch: async (req: any) => {
 		const url = new URL(req.url);
 		// events endpoint
 		if (url.pathname === "/events.json") return handleEvents(req);
+		if (url.pathname === "/list-tickets") return handleListTickets(req);
+		if (url.pathname === "/list-diagnose-packages") return handleListDiagnosePackages(req);
+		if (url.pathname === "/list-servers") return handleListServers(req);
+		if (url.pathname === "/load-diagnose") return handleLoadDiagnose(req);
 
 		// default to serving static files from ./public
-		// map / -> /public/index.html
+		// map / and /nuosupport/* -> /public/index.html (for SPA routing)
 		let pathname = url.pathname;
-		if (pathname === "/") pathname = "/index.html";
-		try {
-			const filePath = `public${pathname}`;
-			// Bun.file will throw if file doesn't exist
-			const file = Bun.file(filePath);
+		if (pathname === "/" || pathname.startsWith("/nuosupport/")) {
+			pathname = "/index.html";
+		}
+		const filePath = `public${pathname}`;
+		const file = Bun.file(filePath);
+		
+		// Check if file exists before trying to serve it
+		if (await file.exists()) {
 			const mime = lookupMime(filePath) || "application/octet-stream";
 			return new Response(file.stream(), { headers: { "Content-Type": mime } });
-		} catch (e) {
-			return new Response("Not Found", { status: 404 });
 		}
+		
+		return new Response("Not Found", { status: 404 });
 	},
 });
 

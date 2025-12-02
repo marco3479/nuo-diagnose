@@ -14,17 +14,26 @@ function clamp(v: number, min: number, max: number) { return Math.max(min, Math.
 
 function StackApp(): JSX.Element {
   const [path, setPath] = useState('tests/mock/nuoadmin.log');
+  const [loadMode, setLoadMode] = useState<'file' | 'nuosupport'>('nuosupport');
+  const [zdTickets, setZdTickets] = useState<string[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<string>('');
+  const [diagnosePackages, setDiagnosePackages] = useState<string[]>([]);
+  const [selectedPackage, setSelectedPackage] = useState<string>('');
+  const [servers, setServers] = useState<string[]>([]);
+  const [selectedServer, setSelectedServer] = useState<string>('');
   const [instances, setInstances] = useState<Instance[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [dbStates, setDbStates] = useState<DbStates>({});
   const [failureProtocols, setFailureProtocols] = useState<FailureProtocol[]>([]);
   const [selectedSid, setSelectedSid] = useState<number | null>(null);
   const [selectedDb, setSelectedDb] = useState<string | null>(null);
+  const [selectedUnclassified, setSelectedUnclassified] = useState<boolean>(false);
   const [rangeStart, setRangeStart] = useState<number | null>(null);
   const [rangeEnd, setRangeEnd] = useState<number | null>(null);
   const [globalStart, setGlobalStart] = useState<number>(Date.now());
   const [globalEnd, setGlobalEnd] = useState<number>(Date.now() + 1);
   const [loading, setLoading] = useState(false);
+  const [loadedServer, setLoadedServer] = useState<string>('');
   // Table filters & sorting
   const [filterType, setFilterType] = useState<string>('ALL');
   const [filterAddr, setFilterAddr] = useState<string>('');
@@ -39,7 +48,7 @@ function StackApp(): JSX.Element {
   const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
   const [focusedEventIndex, setFocusedEventIndex] = useState<number>(-1);
   const [panelFocus, setPanelFocus] = useState<'timeline' | 'table' | 'events'>('timeline');
-  const [focusedTimelineItem, setFocusedTimelineItem] = useState<{type: 'db' | 'sid', key: string, index: number} | null>(null);
+  const [focusedTimelineItem, setFocusedTimelineItem] = useState<{type: 'ap' | 'unclassified' | 'db' | 'sid', key: string, index: number} | null>(null);
   const [hoveredBar, setHoveredBar] = useState<{type: 'process' | 'db' | 'frp', id: string, content: string} | null>(null);
 
   async function load(p = path) {
@@ -52,6 +61,7 @@ function StackApp(): JSX.Element {
       setEvents(json.events || []);
       setDbStates(json.dbStates || {});
       setFailureProtocols(json.failureProtocols || []);
+      setLoadedServer('');
       if (json.range && json.range.start && json.range.end) {
         setGlobalStart(json.range.start); setGlobalEnd(json.range.end);
         setRangeStart(json.range.start); setRangeEnd(json.range.end);
@@ -66,7 +76,136 @@ function StackApp(): JSX.Element {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load(); }, []);
+  async function loadFromNuoSupport() {
+    if (!selectedTicket || !selectedPackage || !selectedServer) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/load-diagnose?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}&server=${encodeURIComponent(selectedServer)}`);
+      const json = await res.json();
+      if (json.error) {
+        console.error(json.error);
+        alert(`Error: ${json.error}`);
+        return;
+      }
+      const insts: Instance[] = (json.instances || []).map((i: any) => ({ process: i.process, sid: i.sid, start: i.start, end: i.end, firstIso: i.firstIso, lastIso: i.lastIso, type: i.type, address: i.address }));
+      setInstances(insts.sort((a, b) => a.start - b.start));
+      setEvents(json.events || []);
+      setDbStates(json.dbStates || {});
+      setFailureProtocols(json.failureProtocols || []);
+      setLoadedServer(json.server || selectedServer);
+      if (json.range && json.range.start && json.range.end) {
+        setGlobalStart(json.range.start); setGlobalEnd(json.range.end);
+        setRangeStart(json.range.start); setRangeEnd(json.range.end);
+      } else if (insts.length) {
+        const firstInst = insts[0]!;
+        const lastInst = (insts[insts.length - 1] ?? insts[0])!;
+        setGlobalStart(firstInst.start); setGlobalEnd((lastInst.end ?? lastInst.start));
+        setRangeStart(firstInst.start); setRangeEnd((lastInst.end ?? lastInst.start));
+      }
+    } catch (e) {
+      console.error(e);
+      alert(`Error loading diagnose: ${e}`);
+    } finally { setLoading(false) }
+  }
+
+  // Load ZD tickets on mount and parse URL parameters
+  useEffect(() => {
+    // Parse URL parameters like /nuosupport/zd12345/diagnose-20231201/server01
+    const urlPath = window.location.pathname;
+    const match = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+    
+    console.log('Fetching ZD tickets...');
+    fetch('/list-tickets')
+      .then((res: any) => {
+        console.log('Tickets response status:', res.status);
+        return res.json();
+      })
+      .then((json: any) => {
+        console.log('Tickets data:', json);
+        if (json.tickets) {
+          console.log(`Found ${json.tickets.length} tickets`);
+          setZdTickets(json.tickets);
+          
+          // If URL has parameters, set them
+          if (match) {
+            const [, ticket, pkg, server] = match;
+            setLoadMode('nuosupport');
+            setSelectedTicket(ticket);
+            // Package and server will be set by their respective useEffects
+            // Store them temporarily
+            (window as any).__initialPackage = pkg;
+            (window as any).__initialServer = server;
+          }
+        } else if (json.error) {
+          console.error('Error from server:', json.error);
+        }
+      })
+      .catch((e: any) => console.error('Failed to load tickets:', e));
+  }, []);
+
+  // Load diagnose packages when ticket selected
+  useEffect(() => {
+    if (!selectedTicket) {
+      setDiagnosePackages([]);
+      setSelectedPackage('');
+      return;
+    }
+    fetch(`/list-diagnose-packages?ticket=${encodeURIComponent(selectedTicket)}`)
+      .then((res: any) => res.json())
+      .then((json: any) => {
+        if (json.packages) {
+          setDiagnosePackages(json.packages);
+          // Check if we have a package from URL
+          const initialPkg = (window as any).__initialPackage;
+          if (initialPkg && json.packages.includes(initialPkg)) {
+            setSelectedPackage(initialPkg);
+            delete (window as any).__initialPackage;
+          } else if (json.packages.length > 0) {
+            setSelectedPackage(json.packages[0]);
+          }
+        }
+      })
+      .catch((e: any) => console.error('Failed to load packages:', e));
+  }, [selectedTicket]);
+
+  // Load servers when package selected
+  useEffect(() => {
+    if (!selectedTicket || !selectedPackage) {
+      setServers([]);
+      setSelectedServer('');
+      return;
+    }
+    // Reset selected server when package changes
+    setSelectedServer('');
+    setServers([]);
+    
+    fetch(`/list-servers?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}`)
+      .then((res: any) => res.json())
+      .then((json: any) => {
+        if (json.servers) {
+          setServers(json.servers);
+          // Check if we have a server from URL
+          const initialServer = (window as any).__initialServer;
+          if (initialServer && json.servers.includes(initialServer)) {
+            setSelectedServer(initialServer);
+            delete (window as any).__initialServer;
+          } else if (json.servers.length > 0) {
+            setSelectedServer(json.servers[0]);
+          }
+        }
+      })
+      .catch((e: any) => console.error('Failed to load servers:', e));
+  }, [selectedTicket, selectedPackage]);
+
+  // Automatically load when server is selected
+  useEffect(() => {
+    if (selectedServer && selectedTicket && selectedPackage && loadMode === 'nuosupport') {
+      // Update URL to match current selection
+      const newPath = `/nuosupport/${selectedTicket}/${selectedPackage}/${selectedServer}`;
+      window.history.pushState({}, '', newPath);
+      loadFromNuoSupport();
+    }
+  }, [selectedServer]);
 
   const span = Math.max(1, (rangeEnd ?? globalEnd) - (rangeStart ?? globalStart));
   const gStart = rangeStart ?? globalStart;
@@ -159,8 +298,50 @@ function StackApp(): JSX.Element {
   };
   const visibleSorted = filtered.slice().sort(comparator);
 
-  // Build all rows (db rows + instance rows) for keyboard navigation
-  const allTableRows = [...Object.keys(dbStates || {}).map(db => ({ type: 'db' as const, key: db })), ...visibleSorted.map((inst, idx) => ({ type: 'instance' as const, key: `inst-${idx}`, instance: inst }))];
+  // Classify all events into process, database, or unclassified categories
+  const processEvents: any[] = [];
+  const databaseEvents: any[] = [];
+  const unclassifiedEvents: any[] = [];
+  
+  for (const e of events) {
+    const msg = e.message ?? '';
+    const raw = e.raw ?? '';
+    
+    // Check if it's a process event (has startId, start-id, or sid parameters)
+    const hasProcessId = /\b(?:startIds?|start-id|sid)[:=]/.test(msg) || /\b(?:startIds?|start-id|sid)[:=]/.test(raw);
+    if (hasProcessId) {
+      processEvents.push(e);
+      continue;
+    }
+    
+    // Check if it's a database event
+    // 1. Has dbName parameter
+    const hasDatabaseName = /\bdbName[:=]/.test(msg) || /\bdbName[:=]/.test(raw);
+    if (hasDatabaseName) {
+      databaseEvents.push(e);
+      continue;
+    }
+    
+    // 2. DomainProcessStateMachine events that mention any known database name
+    const isDomainProcessStateMachine = /DomainProcessStateMachine/.test(msg) || /DomainProcessStateMachine/.test(raw);
+    if (isDomainProcessStateMachine) {
+      const mentionsAnyDb = Object.keys(dbStates || {}).some(db => msg.includes(db) || raw.includes(db));
+      if (mentionsAnyDb) {
+        databaseEvents.push(e);
+        continue;
+      }
+    }
+    
+    // Everything else is unclassified
+    unclassifiedEvents.push(e);
+  }
+  
+  const hasUnclassified = unclassifiedEvents.length > 0;
+  const allTableRows = [
+    ...(hasUnclassified ? [{ type: 'unclassified' as const, key: 'unclassified' }] : []),
+    ...Object.keys(dbStates || {}).map(db => ({ type: 'db' as const, key: db })), 
+    ...visibleSorted.map((inst, idx) => ({ type: 'instance' as const, key: `inst-${idx}`, instance: inst }))
+  ];
 
   const toggleSort = (key: 'sid' | 'type' | 'address' | 'start' | 'end') => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -188,8 +369,9 @@ function StackApp(): JSX.Element {
   useEffect(() => {
     const handleKeyDown = (e: any) => {
       if (panelFocus === 'timeline') {
-        // Build timeline items list (db rows + sid rows)
-        const timelineItems: Array<{type: 'db' | 'sid', key: string}> = [
+        // Build timeline items list (ap + unclassified + db rows + sid rows)
+        const timelineItems: Array<{type: 'unclassified' | 'db' | 'sid', key: string}> = [
+          ...(hasUnclassified ? [{ type: 'unclassified' as const, key: 'unclassified' }] : []),
           ...Object.keys(dbStates || {}).map(db => ({ type: 'db' as const, key: db })),
           ...addresses.flatMap(addr => (groupsByAddress[addr] || []).map(sid => ({ type: 'sid' as const, key: sid })))
         ];
@@ -202,12 +384,18 @@ function StackApp(): JSX.Element {
             const nextItem = timelineItems[currentIndex + 1];
             if (nextItem) {
               setFocusedTimelineItem({type: nextItem.type, key: nextItem.key, index: 0});
-              if (nextItem.type === 'db') {
+              if (nextItem.type === 'unclassified') {
+                setSelectedUnclassified(true);
+                setSelectedDb(null);
+                setSelectedSid(null);
+              } else if (nextItem.type === 'db') {
                 setSelectedDb(nextItem.key);
                 setSelectedSid(null);
+                setSelectedUnclassified(false);
               } else {
                 setSelectedSid(Number(nextItem.key));
                 setSelectedDb(null);
+                setSelectedUnclassified(false);
               }
             }
           } else {
@@ -231,12 +419,18 @@ function StackApp(): JSX.Element {
             const prevItem = timelineItems[currentIndex - 1];
             if (prevItem) {
               setFocusedTimelineItem({type: prevItem.type, key: prevItem.key, index: 0});
-              if (prevItem.type === 'db') {
+              if (prevItem.type === 'unclassified') {
+                setSelectedUnclassified(true);
+                setSelectedDb(null);
+                setSelectedSid(null);
+              } else if (prevItem.type === 'db') {
                 setSelectedDb(prevItem.key);
                 setSelectedSid(null);
+                setSelectedUnclassified(false);
               } else {
                 setSelectedSid(Number(prevItem.key));
                 setSelectedDb(null);
+                setSelectedUnclassified(false);
               }
             }
           }
@@ -252,13 +446,20 @@ function StackApp(): JSX.Element {
           setFocusedRowIndex(newIndex);
           if (newIndex >= 0 && newIndex < allTableRows.length) {
             const row = allTableRows[newIndex];
-            if (row && row.type === 'db') {
+            if (row && row.type === 'unclassified') {
+              setSelectedUnclassified(true);
+              setSelectedDb(null);
+              setSelectedSid(null);
+              setFocusedTimelineItem({type: 'unclassified', key: 'unclassified', index: 0});
+            } else if (row && row.type === 'db') {
               setSelectedDb(row.key);
               setSelectedSid(null);
+              setSelectedUnclassified(false);
               setFocusedTimelineItem({type: 'db', key: row.key, index: 0});
             } else if (row && row.type === 'instance' && 'instance' in row && row.instance) {
               setSelectedSid(row.instance.sid);
               setSelectedDb(null);
+              setSelectedUnclassified(false);
               setFocusedTimelineItem({type: 'sid', key: String(row.instance.sid), index: 0});
             }
           }
@@ -301,7 +502,7 @@ function StackApp(): JSX.Element {
               }
             }
           }
-        } else if (e.key === 'ArrowRight' && (selectedSid !== null || selectedDb !== null)) {
+        } else if (e.key === 'ArrowRight' && (selectedSid !== null || selectedDb !== null || selectedUnclassified)) {
           e.preventDefault();
           setPanelFocus('events');
           setFocusedEventIndex(0);
@@ -309,7 +510,9 @@ function StackApp(): JSX.Element {
       } else if (panelFocus === 'events') {
         // Get current event list
         let eventCount = 0;
-        if (selectedDb !== null) {
+        if (selectedUnclassified) {
+          eventCount = unclassifiedEvents.length;
+        } else if (selectedDb !== null) {
           eventCount = (dbStates[selectedDb] || []).length;
         } else if (selectedSid !== null) {
           const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, 'i');
@@ -349,13 +552,94 @@ function StackApp(): JSX.Element {
     };
     (document as any).addEventListener('keydown', handleKeyDown);
     return () => (document as any).removeEventListener('keydown', handleKeyDown);
-  }, [focusedRowIndex, focusedEventIndex, focusedTimelineItem, panelFocus, allTableRows, selectedSid, selectedDb, dbStates, events, failureProtocols, rowsBySid, addresses, groupsByAddress]);
+  }, [focusedRowIndex, focusedEventIndex, focusedTimelineItem, panelFocus, allTableRows, selectedSid, selectedDb, selectedUnclassified, dbStates, events, failureProtocols, rowsBySid, addresses, groupsByAddress, hasUnclassified]);
 
   return (
     <div className="app">
       <div className="controls">
-        <label>Log path: <input value={path} onChange={(e: any) => setPath(e.target.value)} style={{ width: 360 }} /></label>
-        <button onClick={() => load()} disabled={loading}>Load</button>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 12 }}>
+          <label>
+            Load from:
+            <select value={loadMode} onChange={(e: any) => setLoadMode(e.target.value)} style={{ marginLeft: 6 }}>
+              <option value="nuosupport">nuosupport</option>
+              <option value="file">file path</option>
+            </select>
+          </label>
+        </div>
+        
+        {loadMode === 'file' ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <label>Log path: <input value={path} onChange={(e: any) => setPath(e.target.value)} style={{ width: 360 }} /></label>
+            <button onClick={() => load()} disabled={loading}>Load</button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <label>
+                ZD Ticket:
+                <select value={selectedTicket} onChange={(e: any) => setSelectedTicket(e.target.value)} style={{ marginLeft: 6, minWidth: 120 }}>
+                  <option value="">Select ticket...</option>
+                  {zdTickets.slice().reverse().map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                {zdTickets.length > 0 && (
+                  <span style={{ fontSize: 11, color: '#7da3b8', marginLeft: 6 }}>
+                    ({zdTickets.length} tickets loaded)
+                  </span>
+                )}
+              </label>
+              {zdTickets.length === 0 && (
+                <span style={{ fontSize: 11, color: '#ff8888' }}>
+                  Loading tickets... (Check console for errors)
+                </span>
+              )}
+              <label>
+                Diagnose Package:
+                <select value={selectedPackage} onChange={(e: any) => setSelectedPackage(e.target.value)} style={{ marginLeft: 6, minWidth: 200 }} disabled={!selectedTicket}>
+                  <option value="">Select package...</option>
+                  {diagnosePackages.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </label>
+              <label>
+                Server:
+                <select 
+                  value={selectedServer} 
+                  onChange={(e: any) => setSelectedServer(e.target.value)} 
+                  onKeyDown={(e: any) => {
+                    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                      const select = e.target;
+                      const currentIndex = select.selectedIndex;
+                      let newIndex = currentIndex;
+                      
+                      if (e.key === 'ArrowDown' && currentIndex < select.options.length - 1) {
+                        newIndex = currentIndex + 1;
+                      } else if (e.key === 'ArrowUp' && currentIndex > 0) {
+                        newIndex = currentIndex - 1;
+                      }
+                      
+                      if (newIndex !== currentIndex && newIndex > 0) {
+                        const newValue = select.options[newIndex].value;
+                        if (newValue) {
+                          setSelectedServer(newValue);
+                        }
+                      }
+                    }
+                  }}
+                  style={{ marginLeft: 6, minWidth: 250 }} 
+                  disabled={!selectedPackage}
+                >
+                  <option value="">Select server...</option>
+                  {servers.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
+              {loading && <span style={{ color: '#7da3b8', fontSize: 13 }}>Loading...</span>}
+            </div>
+            {loadedServer && (
+              <div style={{ fontSize: 13, color: '#7da3b8', fontStyle: 'italic' }}>
+                Loaded all nuoadmin.log* files from: {loadedServer}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="timeline">
@@ -386,6 +670,75 @@ function StackApp(): JSX.Element {
                         />
                       );
                     })}
+                    {/* Add UpdateDatabaseOptionsCommand events as diamonds */}
+                    {/* Add UpdateDatabaseOptionsCommand events as slivers */}
+                    {(function() {
+                      const dbEvents = events.filter((e: any) => {
+                        const msg = e.message ?? '';
+                        const raw = e.raw ?? '';
+                        // Check if this is an UpdateDatabaseOptionsCommand from DomainProcessStateMachine
+                        const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(msg) || /UpdateDatabaseOptionsCommand/.test(raw);
+                        const isDomainProcessStateMachine = /DomainProcessStateMachine/.test(msg) || /DomainProcessStateMachine/.test(raw);
+                        if (!isUpdateDbCmd || !isDomainProcessStateMachine) return false;
+                        
+                        // Match if database name appears anywhere in the log (including in JSON/params)
+                        const hasDbName = msg.includes(db) || raw.includes(db);
+                        // Also match patterns like "name=dbname" or "name\":\"dbname\""
+                        const dbNamePattern = new RegExp(`name[=:\s"']+${db}`, 'i');
+                        const hasDbInParams = dbNamePattern.test(msg) || dbNamePattern.test(raw);
+                        
+                        // If this UpdateDatabaseOptionsCommand doesn't match ANY database specifically,
+                        // show it on ALL database timelines (it applies to all or DB context is implicit)
+                        const matchesAnyDb = Object.keys(dbStates || {}).some(dbName => {
+                          return msg.includes(dbName) || raw.includes(dbName) || 
+                                 new RegExp(`name[=:\s"']+${dbName}`, 'i').test(msg) ||
+                                 new RegExp(`name[=:\s"']+${dbName}`, 'i').test(raw);
+                        });
+                        
+                        return (hasDbName || hasDbInParams) || !matchesAnyDb;
+                      }).sort((a: any, b: any) => a.ts - b.ts);
+                      
+                      // Group events that are very close together (within 0.5% of timeline width)
+                      const groupedEvents: Array<{events: any[], left: number}> = [];
+                      const groupThreshold = 0.5; // 0.5% of timeline
+                      
+                      dbEvents.forEach((ev: any) => {
+                        const left = ((ev.ts - globalStart) / (globalEnd - globalStart)) * 100;
+                        const lastGroup = groupedEvents[groupedEvents.length - 1];
+                        
+                        if (lastGroup && Math.abs(left - lastGroup.left) < groupThreshold) {
+                          // Add to existing group
+                          lastGroup.events.push(ev);
+                        } else {
+                          // Create new group
+                          groupedEvents.push({events: [ev], left: left});
+                        }
+                      });
+                      
+                      return groupedEvents.map((group, groupIdx) => {
+                        const sliverId = `db-${db}-update-group-${groupIdx}`;
+                        const tooltipContent = group.events.map(ev => `${ev.iso}\n${ev.raw ?? ev.message}`).join('\n\n---\n\n');
+                        const width = group.events.length > 1 ? '3px' : '2px'; // Thicker for groups
+                        
+                        return (
+                          <div 
+                            key={sliverId}
+                            style={{ 
+                              left: `${group.left}%`, 
+                              position: 'absolute', 
+                              top: '0', 
+                              bottom: '0', 
+                              width: width, 
+                              background: 'hsla(280, 60%, 60%, 0.9)', 
+                              zIndex: 10,
+                              anchorName: `--${sliverId}` 
+                            } as any}
+                            onMouseEnter={() => setHoveredBar({type: 'frp', id: sliverId, content: tooltipContent})}
+                            onMouseLeave={() => setHoveredBar(null)}
+                          />
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               );
@@ -403,6 +756,57 @@ function StackApp(): JSX.Element {
             </div>
           </div>
         )}
+        
+        {/* Unclassified events section */}
+        {unclassifiedEvents.length > 0 && (
+          <div className="stack-area" style={{ marginBottom: 6 }}>
+            <div 
+              className="stack-row" 
+              style={{ 
+                opacity: 0.95, 
+                cursor: 'pointer', 
+                outline: selectedUnclassified ? '2px solid rgba(43, 157, 244, 0.6)' : 'none', 
+                outlineOffset: -2 
+              }} 
+              onClick={() => { 
+                setSelectedUnclassified(true);
+                setSelectedSid(null);
+                setSelectedDb(null);
+                setPanelFocus('table');
+                setFocusedTimelineItem({type: 'unclassified', key: 'unclassified', index: 0});
+              }}
+            >
+              <div className="stack-label">Unclassified Events ({unclassifiedEvents.length})</div>
+              <div className="stack-track">
+                <div className="selection-overlay" style={{ left: `${((gStart - globalStart) / (globalEnd - globalStart)) * 100}%`, right: `${100 - ((gEnd - globalStart) / (globalEnd - globalStart)) * 100}%` }} />
+                {unclassifiedEvents.map((ev: any, idx: number) => {
+                  const left = ((ev.ts - globalStart) / (globalEnd - globalStart)) * 100;
+                  const dotId = `unclassified-${idx}`;
+                  return (
+                    <div 
+                      key={dotId}
+                      className="frp-dot" 
+                      style={{ 
+                        left: `${left}%`, 
+                        position: 'absolute', 
+                        top: '2px', 
+                        width: 8, 
+                        height: 8, 
+                        background: 'hsla(280, 60%, 50%, 0.9)', 
+                        transform: 'rotate(45deg)', 
+                        zIndex: 10,
+                        anchorName: `--${dotId}` 
+                      } as any}
+                      onMouseEnter={() => setHoveredBar({type: 'frp', id: dotId, content: `${ev.iso}\n${ev.raw ?? ev.message}`})}
+                      onMouseLeave={() => setHoveredBar(null)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+        
         <div className="stack-area" style={{ position: 'relative' }} onMouseMove={(e: any) => { const rect = e.currentTarget.getBoundingClientRect(); setCursorX(e.clientX - rect.left); }} onMouseLeave={() => setCursorX(null)}>
           {cursorX !== null && <div style={{ position: 'absolute', left: cursorX, top: 0, bottom: 0, width: 1, background: 'rgba(255, 255, 255, 0.3)', pointerEvents: 'none', zIndex: 100 }} />}
           {addresses.map((addr) => {
@@ -499,7 +903,7 @@ function StackApp(): JSX.Element {
                         {/* Overlay failure protocol events for this sid */}
                         {failureProtocols.filter(frp => frp.sid === Number(sid)).map((frp, idx) => {
                           const left = ((frp.ts - globalStart) / (globalEnd - globalStart)) * 100;
-                          const tooltipContent = `${frp.iso}\n${frp.raw}`;
+                          const tooltipContent = frp.raw.replace(/^(\S+)\s+/, '$1\n');
                           const frpId = `frp-${sid}-${idx}`;
                           return (
                             <div 
@@ -511,6 +915,60 @@ function StackApp(): JSX.Element {
                             />
                           );
                         })}
+                        {/* ASSERT events from RemoveNodeCommand - red glowing markers */}
+                        {(function() {
+                          const assertEvents = events.filter((e: any) => {
+                            const msg = e.message ?? '';
+                            const sidMatch = new RegExp(`\\bstartId=${sid}\\b`, 'i').test(msg);
+                            const isRemoveNode = /RemoveNodeCommand/.test(msg);
+                            const reasonMatch = isRemoveNode ? msg.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
+                            const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+                            return sidMatch && hasAssert;
+                          }).sort((a: any, b: any) => a.ts - b.ts);
+                          
+                          // Group events that are very close together (within 0.5% of timeline width)
+                          const groupedEvents: Array<{events: any[], left: number}> = [];
+                          const groupThreshold = 0.5;
+                          
+                          assertEvents.forEach((ev: any) => {
+                            const left = ((ev.ts - globalStart) / (globalEnd - globalStart)) * 100;
+                            const lastGroup = groupedEvents[groupedEvents.length - 1];
+                            
+                            if (lastGroup && Math.abs(left - lastGroup.left) < groupThreshold) {
+                              lastGroup.events.push(ev);
+                            } else {
+                              groupedEvents.push({events: [ev], left: left});
+                            }
+                          });
+                          
+                          return groupedEvents.map((group, groupIdx) => {
+                            const assertId = `assert-${sid}-${groupIdx}`;
+                            const tooltipContent = group.events.map(ev => `${ev.iso}\n${ev.message ?? ev.raw}`).join('\n\n---\n\n');
+                            const size = group.events.length > 1 ? 12 : 10;
+                            
+                            return (
+                              <div 
+                                key={assertId}
+                                className="frp-dot"
+                                style={{ 
+                                  left: `${group.left}%`, 
+                                  position: 'absolute', 
+                                  top: '2px', 
+                                  width: size, 
+                                  height: size, 
+                                  background: '#ff0000',
+                                  transform: 'rotate(45deg)', 
+                                  zIndex: 11,
+                                  boxShadow: '0 0 8px 2px rgba(255, 0, 0, 0.6)',
+                                  animation: 'pulse-red 2s ease-in-out infinite',
+                                  anchorName: `--${assertId}` 
+                                } as any}
+                                onMouseEnter={() => setHoveredBar({type: 'frp', id: assertId, content: tooltipContent})}
+                                onMouseLeave={() => setHoveredBar(null)}
+                              />
+                            );
+                          });
+                        })()}
                       </div>
                     </div>
                   );
@@ -606,8 +1064,27 @@ function StackApp(): JSX.Element {
               </tr>
             </thead>
             <tbody>
+              {/* Unclassified events row */}
+              {unclassifiedEvents.length > 0 && (
+                <tr 
+                  key="unclassified" 
+                  onClick={() => { 
+                    setSelectedUnclassified(true);
+                    setSelectedSid(null);
+                    setSelectedDb(null);
+                    setPanelFocus('table');
+                    setFocusedEventIndex(0);
+                    setFocusedTimelineItem({type: 'unclassified', key: 'unclassified', index: 0});
+                  }} 
+                  style={{ cursor: 'pointer', background: selectedUnclassified ? 'rgba(43, 157, 244, 0.1)' : undefined }}
+                >
+                  <td style={{ color: '#9fb4c9' }}>—</td>
+                  <td style={{ color: '#9fb4c9' }}>Unclassified</td>
+                  <td colSpan={3} style={{ fontSize: 12, color: '#7da3b8' }}>{unclassifiedEvents.length} events not associated with any process or database</td>
+                </tr>
+              )}
               {Object.keys(dbStates || {}).map((db, dbIdx) => (
-                <tr key={`db-${db}`} onClick={() => { setSelectedDb(db); setSelectedSid(null); setFocusedRowIndex(dbIdx); setPanelFocus('table'); setFocusedEventIndex(0); setFocusedTimelineItem({type: 'db', key: db, index: 0}); }} style={{ cursor: 'pointer', background: selectedDb === db ? 'rgba(43, 157, 244, 0.1)' : undefined }}>
+                <tr key={`db-${db}`} onClick={() => { setSelectedDb(db); setSelectedSid(null); setSelectedUnclassified(false); setFocusedRowIndex(dbIdx); setPanelFocus('table'); setFocusedEventIndex(0); setFocusedTimelineItem({type: 'db', key: db, index: 0}); }} style={{ cursor: 'pointer', background: selectedDb === db ? 'rgba(43, 157, 244, 0.1)' : undefined }}>
                   <td style={{ color: '#9fb4c9' }}>—</td>
                   <td style={{ color: '#9fb4c9' }}>Database</td>
                   <td>{db}</td>
@@ -616,9 +1093,38 @@ function StackApp(): JSX.Element {
               ))}
               {visibleSorted.map((i, idx) => {
                 const rowIndex = Object.keys(dbStates || {}).length + idx;
+                
+                // Detect issues for this process
+                const hasFailureProtocol = failureProtocols.some(frp => frp.sid === i.sid);
+                const removeEvents = events.filter((e: any) => {
+                  const msg = e.message ?? '';
+                  const sidMatch = new RegExp(`\\bstartId=${i.sid}\\b`, 'i').test(msg);
+                  return sidMatch && /RemoveNodeCommand/.test(msg);
+                });
+                const hasNonGracefulRemoval = removeEvents.some(e => !/Gracefully shutdown engine/i.test(e.message ?? ''));
+                const hasAssert = removeEvents.some(e => {
+                  const reasonMatch = e.message?.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/);
+                  return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+                });
+                
+                // Determine issue severity
+                const hasIssue = hasFailureProtocol || hasNonGracefulRemoval || hasAssert;
+                const isCritical = hasAssert || hasFailureProtocol;
+                
+                const rowStyle: any = {
+                  cursor: 'pointer',
+                  background: selectedSid === i.sid ? 'rgba(43, 157, 244, 0.1)' : undefined,
+                  borderLeft: hasIssue ? (isCritical ? '3px solid #ff0000' : '3px solid #ff8844') : undefined,
+                  boxShadow: hasIssue ? (isCritical ? '0 0 8px rgba(255, 0, 0, 0.3)' : '0 0 6px rgba(255, 136, 68, 0.2)') : undefined
+                };
+                
                 return (
-                <tr key={`row-${idx}`} onClick={() => { setSelectedSid(i.sid); setSelectedDb(null); setFocusedRowIndex(rowIndex); setPanelFocus('table'); setFocusedEventIndex(0); setFocusedTimelineItem({type: 'sid', key: String(i.sid), index: 0}); }} style={{ cursor: 'pointer', background: selectedSid === i.sid ? 'rgba(43, 157, 244, 0.1)' : undefined }}>
-                  <td style={{ color: '#bfe7ff' }}>{i.sid}</td>
+                <tr key={`row-${idx}`} onClick={() => { setSelectedSid(i.sid); setSelectedDb(null); setSelectedUnclassified(false); setFocusedRowIndex(rowIndex); setPanelFocus('table'); setFocusedEventIndex(0); setFocusedTimelineItem({type: 'sid', key: String(i.sid), index: 0}); }} style={rowStyle}>
+                  <td style={{ color: '#bfe7ff' }}>
+                    {i.sid}
+                    {hasAssert && <span style={{ marginLeft: 6, color: '#ff6666', fontSize: 11, fontWeight: 600 }} title="ASSERT detected">⚠</span>}
+                    {hasFailureProtocol && <span style={{ marginLeft: 6, color: '#ff4444', fontSize: 11, fontWeight: 600 }} title="Failure Protocol">⚠</span>}
+                  </td>
                   <td>{instanceType(i)}</td>
                   <td>{i.address ?? ''}</td>
                   <td>{i.firstIso ?? new Date(i.start).toISOString()}</td>
@@ -631,22 +1137,21 @@ function StackApp(): JSX.Element {
 
           {/* Side panel: show events for selected sid */}
           <div style={{ width: 420, background: '#05131a', border: '1px solid #12303a', borderRadius: 6, padding: 8 }}>
-            {selectedSid === null && selectedDb === null ? (
+            {selectedSid === null && selectedDb === null && !selectedUnclassified ? (
               <div style={{ color: '#7da3b8' }}>Click a row to see events</div>
-            ) : selectedDb !== null ? (
+            ) : selectedUnclassified ? (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ fontWeight: 600 }}>Database state transitions: {selectedDb}</div>
-                  <button onClick={() => setSelectedDb(null)} style={{ background: '#0b2b34', color: '#9fb4c9', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
+                  <div style={{ fontWeight: 600 }}>Unclassified Events</div>
+                  <button onClick={() => setSelectedUnclassified(false)} style={{ background: '#0b2b34', color: '#9fb4c9', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
                 </div>
                 {(function () {
-                  const dbEvents = dbStates[selectedDb] || [];
-                  if (dbEvents.length === 0) {
+                  if (unclassifiedEvents.length === 0) {
                     return null;
                   }
                   
-                  const minTs = Math.min(...dbEvents.map(e => e.start));
-                  const maxTs = Math.max(...dbEvents.map(e => e.start));
+                  const minTs = Math.min(...unclassifiedEvents.map((e: any) => e.ts));
+                  const maxTs = Math.max(...unclassifiedEvents.map((e: any) => e.ts));
                   const timelineWidth = 380;
                   
                   return (
@@ -655,7 +1160,110 @@ function StackApp(): JSX.Element {
                         {/* Timeline line */}
                         <div style={{ position: 'absolute', left: 10, right: 10, top: '50%', height: 2, background: 'rgba(159, 180, 201, 0.3)', transform: 'translateY(-50%)' }} />
                         {/* Event diamonds */}
-                        {dbEvents.map((seg, idx) => {
+                        {unclassifiedEvents.map((ev: any, idx: number) => {
+                          const pos = maxTs > minTs ? ((ev.ts - minTs) / (maxTs - minTs)) * timelineWidth : timelineWidth / 2;
+                          const isSelected = panelFocus === 'events' && focusedEventIndex === idx;
+                          return (
+                            <div
+                              key={idx}
+                              title={ev.iso}
+                              style={{
+                                position: 'absolute',
+                                left: 10 + pos,
+                                top: '50%',
+                                width: isSelected ? 12 : 8,
+                                height: isSelected ? 12 : 8,
+                                background: isSelected ? '#b380ff' : '#9966ff',
+                                transform: 'translateX(-50%) translateY(-50%) rotate(45deg)',
+                                cursor: 'pointer',
+                                border: isSelected ? '2px solid #fff' : '1px solid rgba(255, 255, 255, 0.3)',
+                                zIndex: isSelected ? 10 : 1,
+                                transition: 'all 0.2s ease'
+                              }}
+                              onClick={() => {
+                                setFocusedEventIndex(idx);
+                                setPanelFocus('events');
+                                setTimeout(() => {
+                                  const elem = document.querySelectorAll('.event-item')[idx];
+                                  if (elem) elem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                                }, 50);
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div style={{ maxHeight: 480, overflow: 'auto' }}>
+                  {unclassifiedEvents.map((ev: any, idx: number) => (
+                    <div 
+                      key={idx} 
+                      className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`} 
+                      onClick={() => { setFocusedEventIndex(idx); setPanelFocus('events'); }} 
+                      style={{ 
+                        padding: '6px 8px', 
+                        borderBottom: '1px solid rgba(255,255,255,0.02)', 
+                        cursor: 'pointer', 
+                        background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : undefined 
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: '#9fb4c9' }}>{ev.iso}</div>
+                      <div style={{ fontSize: 13, color: '#e6eef6', whiteSpace: 'pre-wrap' }}>{(ev.raw ?? ev.message).replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, '')}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : selectedDb !== null ? (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 600 }}>Database state transitions: {selectedDb}</div>
+                  <button onClick={() => setSelectedDb(null)} style={{ background: '#0b2b34', color: '#9fb4c9', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
+                </div>
+                {(function () {
+                  const dbStateEvents = dbStates[selectedDb] || [];
+                  // Get all database events that mention this specific database
+                  const dbSpecificEvents = databaseEvents.filter((e: any) => {
+                    const msg = e.message ?? '';
+                    const raw = e.raw ?? '';
+                    // Match if this database name appears in the event
+                    return msg.includes(selectedDb) || raw.includes(selectedDb);
+                  });
+                  
+                  const allDbEvents = [
+                    ...dbStateEvents,
+                    ...dbSpecificEvents.map(e => {
+                      const fullLog = e.raw ?? e.message;
+                      const messageWithoutIso = fullLog.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, '');
+                      // Determine the type/state label
+                      const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(fullLog);
+                      const state = isUpdateDbCmd ? 'UpdateDatabaseOptionsCommand' : 'Database Event';
+                      return {
+                        start: e.ts, 
+                        iso: e.iso, 
+                        state: state, 
+                        message: messageWithoutIso, 
+                        isUpdate: isUpdateDbCmd
+                      };
+                    })
+                  ];
+                  allDbEvents.sort((a, b) => a.start - b.start);
+                  
+                  if (allDbEvents.length === 0) {
+                    return null;
+                  }
+                  
+                  const minTs = Math.min(...allDbEvents.map((e: any) => e.start));
+                  const maxTs = Math.max(...allDbEvents.map((e: any) => e.start));
+                  const timelineWidth = 380;
+                  
+                  return (
+                    <div style={{ marginBottom: 12, padding: '8px 0' }}>
+                      <div style={{ position: 'relative', height: 32, background: '#0a1e28', borderRadius: 4, padding: '0 10px' }}>
+                        {/* Timeline line */}
+                        <div style={{ position: 'absolute', left: 10, right: 10, top: '50%', height: 2, background: 'rgba(159, 180, 201, 0.3)', transform: 'translateY(-50%)' }} />
+                        {/* Event diamonds */}
+                        {allDbEvents.map((seg: any, idx: number) => {
                           const pos = maxTs > minTs ? ((seg.start - minTs) / (maxTs - minTs)) * timelineWidth : timelineWidth / 2;
                           const isSelected = panelFocus === 'events' && focusedEventIndex === idx;
                           return (
@@ -691,13 +1299,43 @@ function StackApp(): JSX.Element {
                   );
                 })()}
                 <div style={{ maxHeight: 480, overflow: 'auto' }}>
-                  {(dbStates[selectedDb] || []).map((seg, idx) => (
-                    <div key={idx} className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`} onClick={() => { setFocusedEventIndex(idx); setPanelFocus('events'); }} style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.02)', cursor: 'pointer', background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : undefined }}>
-                      <div style={{ fontSize: 12, color: '#9fb4c9' }}>{seg.iso}</div>
-                      <div style={{ fontSize: 13, color: '#e6eef6', fontWeight: 600 }}>{seg.state}</div>
-                      <div style={{ fontSize: 12, color: '#cfe6f7', whiteSpace: 'pre-wrap', marginTop: 2 }}>{seg.message}</div>
-                    </div>
-                  ))}
+                  {(function() {
+                    const dbStateEvents = dbStates[selectedDb] || [];
+                    // Get all database events that mention this specific database
+                    const dbSpecificEvents = databaseEvents.filter((e: any) => {
+                      const msg = e.message ?? '';
+                      const raw = e.raw ?? '';
+                      // Match if this database name appears in the event
+                      return msg.includes(selectedDb) || raw.includes(selectedDb);
+                    });
+                    
+                    const allDbEvents = [
+                      ...dbStateEvents,
+                      ...dbSpecificEvents.map(e => {
+                        const fullLog = e.raw ?? e.message;
+                        const messageWithoutIso = fullLog.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, '');
+                        // Determine the type/state label
+                        const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(fullLog);
+                        const state = isUpdateDbCmd ? 'UpdateDatabaseOptionsCommand' : 'Database Event';
+                        return {
+                          start: e.ts, 
+                          iso: e.iso, 
+                          state: state, 
+                          message: messageWithoutIso, 
+                          isUpdate: isUpdateDbCmd
+                        };
+                      })
+                    ];
+                    allDbEvents.sort((a, b) => a.start - b.start);
+                    
+                    return allDbEvents.map((seg: any, idx) => (
+                      <div key={idx} className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`} onClick={() => { setFocusedEventIndex(idx); setPanelFocus('events'); }} style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.02)', cursor: 'pointer', background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : seg.isUpdate ? 'rgba(280, 60%, 60%, 0.05)' : undefined }}>
+                        <div style={{ fontSize: 12, color: '#9fb4c9' }}>{seg.iso}</div>
+                        <div style={{ fontSize: 13, color: seg.isUpdate ? '#c9a6ff' : '#e6eef6', fontWeight: 600 }}>{seg.state}</div>
+                        <div style={{ fontSize: 12, color: '#cfe6f7', whiteSpace: 'pre-wrap', marginTop: 2 }}>{seg.message}</div>
+                      </div>
+                    ));
+                  })()}
                 </div>
               </div>
             ) : (
@@ -785,31 +1423,50 @@ function StackApp(): JSX.Element {
                     related.sort((a, b) => a.ts - b.ts);
                     // Add failure protocol events for this sid
                     const frpForSid = failureProtocols.filter(frp => frp.sid === selectedSid);
-                    const allEvents = [...related.map(ev => ({ type: 'event', ts: ev.ts, iso: ev.iso, message: ev.message })), ...frpForSid.map(frp => ({ type: 'frp', ts: frp.ts, iso: frp.iso, message: frp.raw.replace(/^\S+\s+/, '') }))];
+                    const allEvents = [...related.map(ev => ({ type: 'event', ts: ev.ts, iso: ev.iso, message: ev.message, fileSource: ev.fileSource })), ...frpForSid.map(frp => ({ type: 'frp', ts: frp.ts, iso: frp.iso, message: frp.raw.replace(/^\S+\s+/, ''), fileSource: undefined as string | undefined }))];
                     allEvents.sort((a, b) => a.ts - b.ts);
-                    return allEvents.map((ev, idx) => {
+                    
+                    // Track file changes for separators
+                    let lastFileSource: string | undefined = undefined;
+                    const elements: JSX.Element[] = [];
+                    
+                    allEvents.forEach((ev, idx) => {
+                      // Add file separator if file source changed
+                      if (loadedServer && ev.fileSource && ev.fileSource !== lastFileSource) {
+                        elements.push(
+                          <div key={`file-sep-${idx}`} style={{ padding: '8px', background: 'rgba(43, 157, 244, 0.08)', borderTop: '2px solid rgba(43, 157, 244, 0.3)', borderBottom: '2px solid rgba(43, 157, 244, 0.3)', margin: '4px 0', fontSize: 12, color: '#7da3b8', fontWeight: 600, textAlign: 'center' }}>
+                            📄 {ev.fileSource}
+                          </div>
+                        );
+                        lastFileSource = ev.fileSource;
+                      }
+                      
                       // Check if this is a RemoveNodeCommand event and extract the reason
                       const isRemoveNode = /RemoveNodeCommand/.test(ev.message);
                       const reasonMatch = isRemoveNode ? ev.message.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
                       const isGraceful = reasonMatch && /Gracefully shutdown engine/i.test(reasonMatch[0]);
+                      const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
                       
-                      return (
-                      <div key={idx} className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`} onClick={() => { setFocusedEventIndex(idx); setPanelFocus('events'); }} style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.02)', cursor: 'pointer', background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : ev.type === 'frp' ? 'rgba(255, 80, 80, 0.05)' : undefined }}>
-                        <div style={{ fontSize: 12, color: '#9fb4c9' }}>{ev.iso}</div>
-                        <div style={{ fontSize: 13, color: ev.type === 'frp' ? '#ffb3b3' : '#e6eef6', whiteSpace: 'pre-wrap' }}>
-                          {isRemoveNode && reasonMatch ? (
-                            <>
-                              {ev.message.substring(0, reasonMatch.index)}
-                              <span style={{ background: isGraceful ? 'rgba(255, 200, 100, 0.2)' : 'rgba(255, 80, 80, 0.2)', color: isGraceful ? '#ffdd99' : '#ffb3b3', padding: '2px 4px', borderRadius: 3, fontWeight: 600 }}>
-                                {reasonMatch[0]}
-                              </span>
-                              {ev.message.substring(reasonMatch.index! + reasonMatch[0].length)}
-                            </>
-                          ) : ev.message}
+                      elements.push(
+                        <div key={idx} className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`} onClick={() => { setFocusedEventIndex(idx); setPanelFocus('events'); }} style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.02)', cursor: 'pointer', background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : ev.type === 'frp' ? 'rgba(255, 80, 80, 0.05)' : undefined }}>
+                          <div style={{ fontSize: 12, color: '#9fb4c9' }}>{ev.iso}</div>
+                          <div style={{ fontSize: 13, color: ev.type === 'frp' ? '#ffb3b3' : '#e6eef6', whiteSpace: 'pre-wrap' }}>
+                            {isRemoveNode && reasonMatch ? (
+                              <>
+                                {ev.message.substring(0, reasonMatch.index)}
+                                <span style={{ background: hasAssert ? 'rgba(255, 0, 0, 0.3)' : isGraceful ? 'rgba(255, 200, 100, 0.2)' : 'rgba(255, 80, 80, 0.2)', color: hasAssert ? '#ff6666' : isGraceful ? '#ffdd99' : '#ffb3b3', padding: '2px 4px', borderRadius: 3, fontWeight: 600, boxShadow: hasAssert ? '0 0 4px rgba(255, 0, 0, 0.4)' : 'none' }}>
+                                  {reasonMatch[0]}
+                                </span>
+                                {ev.message.substring(reasonMatch.index! + reasonMatch[0].length)}
+                              </>
+                            ) : ev.message}
+                          </div>
                         </div>
-                      </div>
                       );
+
                     });
+                    
+                    return elements;
                   })()}
                 </div>
               </div>
