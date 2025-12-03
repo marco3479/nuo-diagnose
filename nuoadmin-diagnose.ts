@@ -18,7 +18,8 @@ let dbStateEvents: DbStateEvent[] = [];
 type FailureProtocolEvent = { dbName: string; sid: number; node: number; iteration: number; ts: number; iso: string; message: string; raw: string };
 let failureProtocolEvents: FailureProtocolEvent[] = [];
 
-type LogEvent = { ts: number; iso: string; process: string; message: string; raw: string; fileSource?: string };
+type DbDiff = { from: Record<string, any>; to: Record<string, any> };
+type LogEvent = { ts: number; iso: string; process: string; message: string; raw: string; fileSource?: string; sid?: number | null; dbDiff?: DbDiff };
 
 function parseDomainLines(text: string, fileSource?: string): LogEvent[] {
 	const lines = text.split(/\r?\n/);
@@ -36,17 +37,95 @@ function parseDomainLines(text: string, fileSource?: string): LogEvent[] {
 		if (Number.isNaN(ts)) continue;
 		const process = bracket.split(":")[0] || bracket || "unknown";
 		// detect startId/sid/start-id tokens in the message
+		// For commands being applied (RemoveNodeCommand, etc.), use the first startId BEFORE "reason=" 
+		// since that's the target. The startId in the reason parameter is secondary.
+		let sid: number | null = null;
+		const reasonIndex = message.indexOf('reason=');
+		if (reasonIndex > 0) {
+			// Extract startId before the reason parameter
+			const beforeReason = message.substring(0, reasonIndex);
+			const sidMatch = beforeReason.match(/\b(?:startId|start-id|sid)=(\d+)\b/i);
+			sid = sidMatch ? Number(sidMatch[1]) : null;
+		}
+		// If no startId found before reason, or no reason param, check the full message
+		if (sid === null) {
 			const sidMatch = message.match(/\b(?:startId|start-id|sid)=(\d+)\b/i) || raw.match(/\b(?:startId|start-id|sid)=(\d+)\b/i);
-			const sid = sidMatch ? Number(sidMatch[1]) : null;
-			// try to extract engine type (TE/SM/AP) and an address/host:port when available
-			const typeMatch = message.match(/\btype=([A-Z]{2,3})\b/);
-			const hostAndPortMatch = message.match(/hostAndPort=([^,\s]+)/);
-			const addressMatch = message.match(/\baddress=([^,\s]+)/);
-			const ipPortMatch = message.match(/(\d+\.\d+\.\d+\.\d+:\d+)/);
-			const instType = typeMatch ? typeMatch[1] : undefined;
-			const instAddr = (hostAndPortMatch && hostAndPortMatch[1]) || (addressMatch && addressMatch[1]) || (ipPortMatch && ipPortMatch[1]) || undefined;
+			sid = sidMatch ? Number(sidMatch[1]) : null;
+		}
+		// try to extract engine type (TE/SM/AP) and an address/host:port when available
+		const typeMatch = message.match(/\btype=([A-Z]{2,3})\b/);
+		const hostIdMatch = message.match(/\bhostId=([^,\s]+)/) || raw.match(/\bhostId=([^,\s]+)/);
+		const hostAndPortMatch = message.match(/hostAndPort=([^,\s]+)/) || raw.match(/hostAndPort=([^,\s]+)/);
+		const addressMatch = message.match(/\baddress=([^,\s]+)/);
+		const ipPortMatch = message.match(/(\d+\.\d+\.\d+\.\d+:\d+)/);
+		const instType = typeMatch ? typeMatch[1] : undefined;
+		// Prefer hostId over hostAndPort (hostAndPort can be "<LOCAL SERVER>" which gets truncated to "<LOCAL")
+		// Filter out <LOCAL entirely - don't use it at all
+		const hostAndPort = hostAndPortMatch && hostAndPortMatch[1];
+		const cleanHostAndPort = (hostAndPort && !hostAndPort.startsWith('<LOCAL')) ? hostAndPort : undefined;
+		const instAddr = (hostIdMatch && hostIdMatch[1]) || cleanHostAndPort || (addressMatch && addressMatch[1]) || (ipPortMatch && ipPortMatch[1]) || undefined;
 
-		events.push({ ts, iso, process, message, raw, fileSource });
+		const evt: LogEvent = { ts, iso, process, message, raw, fileSource, sid };
+		
+		// Parse database update diffs for highlighting
+		if (/Updated database from DatabaseInfo\{/.test(message)) {
+			// Extract DatabaseInfo content by counting braces
+			const extractDbInfo = (text: string, marker: string) => {
+				const startIdx = text.indexOf(marker);
+				if (startIdx === -1) return null;
+				const openIdx = text.indexOf('{', startIdx);
+				if (openIdx === -1) return null;
+				let depth = 1;
+				let i = openIdx + 1;
+				while (i < text.length && depth > 0) {
+					if (text[i] === '{') depth++;
+					else if (text[i] === '}') depth--;
+					i++;
+				}
+				return depth === 0 ? text.substring(openIdx + 1, i - 1) : null;
+			};
+			
+			const fromContent = extractDbInfo(message, 'from DatabaseInfo{');
+			const toContent = extractDbInfo(message, 'to DatabaseInfo{');
+			
+			if (fromContent && toContent) {
+				const parseDbInfo = (str: string) => {
+					const obj: Record<string, any> = {};
+					// Parse key=value pairs, handling nested braces
+					let i = 0;
+					while (i < str.length) {
+						// Skip whitespace
+						while (i < str.length && /\s/.test(str[i])) i++;
+						if (i >= str.length) break;
+						
+						// Find next key (letters, numbers, hyphens)
+						const eqIdx = str.indexOf('=', i);
+						if (eqIdx === -1) break;
+						
+						const key = str.substring(i, eqIdx).trim();
+						if (!key) { i = eqIdx + 1; continue; }
+						
+						// Find value (until comma or end, respecting braces)
+						let valStart = eqIdx + 1;
+						let valEnd = valStart;
+						let depth = 0;
+						while (valEnd < str.length) {
+							if (str[valEnd] === '{') depth++;
+							else if (str[valEnd] === '}') depth--;
+							else if (str[valEnd] === ',' && depth === 0) break;
+							valEnd++;
+						}
+						const value = str.substring(valStart, valEnd).trim();
+						obj[key] = value;
+						i = valEnd + 1; // Skip comma and continue
+					}
+					return obj;
+				};
+				evt.dbDiff = { from: parseDbInfo(fromContent), to: parseDbInfo(toContent) };
+			}
+		}
+		
+		events.push(evt);
 
 		// Capture database state transitions
 		// Prefer the "to" (target) state. We attempt a primary pattern that spans the line,
@@ -77,17 +156,27 @@ function parseDomainLines(text: string, fileSource?: string): LogEvent[] {
 		if (sid !== null) {
 			// capture type/address hints for this sid whenever present (without affecting lifecycle timing)
 			if (instType) sidTypeMap[sid] = sidTypeMap[sid] || instType;
-			if (instAddr) sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
+			// Only store address if it's good (not <LOCAL) OR if we don't have one yet
+			if (instAddr && !instAddr.startsWith('<LOCAL')) {
+				sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
+			} else if (instAddr && !sidAddressMap[sid]) {
+				// Store <LOCAL as fallback only if we have nothing else
+				sidAddressMap[sid] = instAddr;
+			}
 			// Determine whether this occurrence should be recorded for instance lifecycle.
 			// We only treat "Applied StartNodeCommand" as the authoritative start moment
 			// (instead of earlier "Requesting node" lines). We still record occurrences
 			// for Remove/Shutdown-related commands so we can capture end/remove events.
 			const isAppliedStart = /\bApplied\s+StartNodes?Command\b/i.test(message);
-			const isRemoveOrShutdown = /\b(RemoveNodeCommand|ShutdownNodesCommand|ShutdownNodeCommand)\b/i.test(message);
+			// For RemoveNode/Shutdown commands, only record if it's the RESPONSE (Applied/DomainProcessCommandResponse)
+			// not the command application itself, to avoid recording admin's action on other processes
+			const isAppliedRemove = /\bApplied\s+(RemoveNodeCommand|ShutdownNodesCommand|ShutdownNodeCommand)\b/i.test(message);
 			const isDomainResponse = /DomainProcessCommandResponse/.test(message);
-			// record only if this is an applied start or a remove/shutdown event (or similar)
-			if (isAppliedStart || isRemoveOrShutdown || /\bApplying\s+RemoveNodeCommand\b/i.test(message) || /\bApplying\s+ShutdownNodesCommand\b/i.test(message) || isDomainResponse && isRemoveOrShutdown) {
-				startIdOccurrences.push({ process, sid, ts, iso, raw, type: instType || sidTypeMap[sid], address: instAddr || sidAddressMap[sid], isStart: !!isAppliedStart });
+			// record only if this is an applied start or an applied remove/shutdown response
+			if (isAppliedStart || isAppliedRemove || isDomainResponse) {
+				// Prefer address from sidAddressMap if current instAddr is "<LOCAL" or empty
+				const effectiveAddr = (instAddr && !instAddr.startsWith('<LOCAL')) ? instAddr : (sidAddressMap[sid] || instAddr);
+				startIdOccurrences.push({ process, sid, ts, iso, raw, type: instType || sidTypeMap[sid], address: effectiveAddr, isStart: !!isAppliedStart });
 			}
 		}
 	}
@@ -149,10 +238,10 @@ async function handleEvents(request: any) {
 		for (const occ of startIdOccurrences) {
 			if (occ.isStart) sidHasStart[occ.sid] = true;
 		}
-		// build instances from startId occurrences: for each (process,sid) get first and last ts
+		// build instances from startId occurrences: group by sid only (not by logging process)
 		const instancesMap: Record<string, { process: string; sid: number; start: number; end: number; firstIso?: string; lastIso?: string; type?: string; address?: string }> = {};
 		for (const occ of startIdOccurrences) {
-			const key = `${occ.process}:${occ.sid}`;
+			const key = `${occ.sid}`;
 					if (!instancesMap[key]) instancesMap[key] = { process: occ.process, sid: occ.sid, start: occ.ts, end: occ.ts, firstIso: occ.iso, lastIso: occ.iso, type: occ.type, address: occ.address };
 					else {
 						const cur = instancesMap[key];
@@ -160,7 +249,10 @@ async function handleEvents(request: any) {
 						if (occ.ts > cur.end) { cur.end = occ.ts; cur.lastIso = occ.iso; }
 						// prefer setting type/address if present
 						if (!cur.type && occ.type) cur.type = occ.type;
-						if (!cur.address && occ.address) cur.address = occ.address;
+						// Prefer non-<LOCAL addresses over existing ones
+						if (occ.address && (!cur.address || (cur.address.startsWith('<LOCAL') && !occ.address.startsWith('<LOCAL')))) {
+							cur.address = occ.address;
+						}
 					}
 		}
 		const first = events[0];
@@ -214,16 +306,27 @@ async function handleListTickets(request: any) {
 	const DASSAULT_PATH = "/support/tickets/dassault";
 	try {
 		const fs = await import('fs/promises');
-		const dirents = await fs.readdir(DASSAULT_PATH, { withFileTypes: true });
-		console.log(`[handleListTickets] Total dirents: ${dirents.length}`);
-		const zdAll = dirents.filter(d => d.name.startsWith('zd'));
-		console.log(`[handleListTickets] Items starting with zd: ${zdAll.length}`);
-		const tickets = dirents
-			.filter(d => d.isDirectory() && d.name.startsWith('zd'))
-			.map(d => d.name)
-			.sort();
-		console.log(`[handleListTickets] Filtered tickets (isDirectory + zd): ${tickets.length}`);
-		console.log(`[handleListTickets] First 3 tickets:`, tickets.slice(0, 3));
+		const path = await import('path');
+		const entries = await fs.readdir(DASSAULT_PATH);
+		
+		// Filter for zd* entries and check if they're directories using stat
+		const tickets: string[] = [];
+		for (const entry of entries) {
+			if (entry.startsWith('zd')) {
+				try {
+					const fullPath = path.join(DASSAULT_PATH, entry);
+					const stat = await fs.stat(fullPath);
+					if (stat.isDirectory()) {
+						tickets.push(entry);
+					}
+				} catch (e) {
+					// Skip entries that can't be stat'd
+				}
+			}
+		}
+		
+		tickets.sort();
+		console.log(`[handleListTickets] Found ${tickets.length} zd directories`);
 		return new Response(JSON.stringify({ tickets }), { headers: { "Content-Type": "application/json" } });
 	} catch (err) {
 		const msg = err && typeof err === "object" && "message" in err ? (err as any).message : String(err);
@@ -240,12 +343,25 @@ async function handleListDiagnosePackages(request: any) {
 	const ticketPath = `/support/tickets/dassault/${ticket}`;
 	try {
 		const fs = await import('fs/promises');
-		const dirents = await fs.readdir(ticketPath, { withFileTypes: true });
-		const packages = dirents
-			.filter(d => d.isDirectory() && d.name.startsWith('diagnose-'))
-			.map(d => d.name)
-			.sort()
-			.reverse(); // newest first
+		const path = await import('path');
+		const entries = await fs.readdir(ticketPath);
+		
+		const packages: string[] = [];
+		for (const entry of entries) {
+			if (entry.startsWith('diagnose-')) {
+				try {
+					const fullPath = path.join(ticketPath, entry);
+					const stat = await fs.stat(fullPath);
+					if (stat.isDirectory()) {
+						packages.push(entry);
+					}
+				} catch (e) {
+					// Skip entries that can't be stat'd
+				}
+			}
+		}
+		
+		packages.sort().reverse(); // newest first
 		return new Response(JSON.stringify({ packages }), { headers: { "Content-Type": "application/json" } });
 	} catch (err) {
 		const msg = err && typeof err === "object" && "message" in err ? (err as any).message : String(err);
@@ -263,14 +379,119 @@ async function handleListServers(request: any) {
 	const adminPath = `/support/tickets/dassault/${ticket}/${pkg}/admin`;
 	try {
 		const fs = await import('fs/promises');
-		const dirents = await fs.readdir(adminPath, { withFileTypes: true });
-		const servers = dirents
-			.filter(d => d.isDirectory())
-			.map(d => d.name)
-			.sort();
+		const path = await import('path');
+		const entries = await fs.readdir(adminPath);
+		
+		const servers: string[] = [];
+		for (const entry of entries) {
+			try {
+				const fullPath = path.join(adminPath, entry);
+				const stat = await fs.stat(fullPath);
+				if (stat.isDirectory()) {
+					servers.push(entry);
+				}
+			} catch (e) {
+				// Skip entries that can't be stat'd
+			}
+		}
+		
+		servers.sort();
 		return new Response(JSON.stringify({ servers }), { headers: { "Content-Type": "application/json" } });
 	} catch (err) {
 		const msg = err && typeof err === "object" && "message" in err ? (err as any).message : String(err);
+		return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
+	}
+}
+
+// Handler to get server time ranges for timeline visualization
+async function handleServerTimeRanges(request: any) {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get("ticket");
+	const pkg = url.searchParams.get("package");
+	console.log(`[server-time-ranges] Request for ticket=${ticket}, package=${pkg}`);
+	if (!ticket || !pkg) return new Response(JSON.stringify({ error: "Missing ticket or package parameter" }), { status: 400, headers: { "Content-Type": "application/json" } });
+	
+	const adminPath = `/support/tickets/dassault/${ticket}/${pkg}/admin`;
+	console.log(`[server-time-ranges] Reading from: ${adminPath}`);
+	try {
+		const fs = await import('fs/promises');
+		const path = await import('path');
+		const entries = await fs.readdir(adminPath);
+		console.log(`[server-time-ranges] Found ${entries.length} entries`);
+		
+		const serverRanges: Array<{server: string, start: number, end: number, startIso: string, endIso: string}> = [];
+		
+		for (const entry of entries) {
+			try {
+				const fullPath = path.join(adminPath, entry);
+				const stat = await fs.stat(fullPath);
+				if (!stat.isDirectory()) continue;
+				
+				const serverPath = fullPath;
+				// Find all nuoadmin.log* files
+				const files = await Array.fromAsync(new Bun.Glob("nuoadmin.log*").scan({ cwd: serverPath, onlyFiles: true }));
+				if (files.length === 0) continue;
+				
+				// Read first and last log entries to get time range
+				const sortedFiles = (files as string[]).sort((a, b) => {
+					if (a === 'nuoadmin.log') return -1;
+					if (b === 'nuoadmin.log') return 1;
+					const aNum = parseInt(a.replace('nuoadmin.log.', ''));
+					const bNum = parseInt(b.replace('nuoadmin.log.', ''));
+					return aNum - bNum;
+				});
+				
+				const oldestFile = sortedFiles[sortedFiles.length - 1];
+				const newestFile = sortedFiles[0];
+				
+				// Get first timestamp from oldest file (read only first few lines)
+				const oldestPath = path.join(serverPath, oldestFile);
+				const oldestHandle = await fs.open(oldestPath, 'r');
+				const oldestBuffer = Buffer.alloc(2048);
+				await oldestHandle.read(oldestBuffer, 0, 2048, 0);
+				await oldestHandle.close();
+				const oldestContent = oldestBuffer.toString('utf8');
+				const oldestLines = oldestContent.split(/\r?\n/);
+				// Find first line that looks like an ISO timestamp (YYYY-MM-DD)
+				const firstTimestampLine = oldestLines.find(line => /^\d{4}-\d{2}-\d{2}/.test(line));
+				const firstLineMatch = firstTimestampLine ? firstTimestampLine.match(/^(\S+)/) : null;
+				const startIso = firstLineMatch ? firstLineMatch[1] : '';
+				const start = startIso ? Date.parse(startIso) : 0;
+				console.log(`[server-time-ranges] ${entry}: start=${startIso} (${start})`);
+				
+				// Get last timestamp from newest file (read last few KB)
+				const newestPath = path.join(serverPath, newestFile);
+				const newestStats = await fs.stat(newestPath);
+				const newestHandle = await fs.open(newestPath, 'r');
+				const readSize = Math.min(8192, newestStats.size);
+				const newestBuffer = Buffer.alloc(readSize);
+				await newestHandle.read(newestBuffer, 0, readSize, Math.max(0, newestStats.size - readSize));
+				await newestHandle.close();
+				const newestContent = newestBuffer.toString('utf8');
+				const lines = newestContent.split(/\r?\n/).filter(l => l.trim());
+				// Find last line that looks like an ISO timestamp
+				const lastTimestampLine = [...lines].reverse().find(line => /^\d{4}-\d{2}-\d{2}/.test(line));
+				const lastLineMatch = lastTimestampLine ? lastTimestampLine.match(/^(\S+)/) : null;
+				const endIso = lastLineMatch ? lastLineMatch[1] : '';
+				const end = endIso ? Date.parse(endIso) : 0;
+				console.log(`[server-time-ranges] ${entry}: end=${endIso} (${end})`);
+				
+				if (start && end && !isNaN(start) && !isNaN(end)) {
+					serverRanges.push({ server: entry, start, end, startIso, endIso });
+					console.log(`[server-time-ranges] Added ${entry}: ${startIso} → ${endIso}`);
+				}
+			} catch (e) {
+				console.error(`[server-time-ranges] Error reading server ${entry}:`, e);
+				// Skip entries that can't be read
+			}
+		}
+		
+		serverRanges.sort((a, b) => a.start - b.start);
+		console.log(`[server-time-ranges] Returning ${serverRanges.length} server ranges`);
+		return new Response(JSON.stringify({ serverRanges }), { headers: { "Content-Type": "application/json" } });
+	} catch (err) {
+		const msg = err && typeof err === "object" && "message" in err ? (err as any).message : String(err);
+		console.error(`[server-time-ranges] Error:`, err);
 		return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
 	}
 }
@@ -340,14 +561,94 @@ async function handleLoadDiagnose(request: any) {
 			const raw = e.raw;
 			const message = e.message;
 			
-			const sidMatch = message.match(/\b(?:startId|start-id|sid)=(\d+)\b/i) || raw.match(/\b(?:startId|start-id|sid)=(\d+)\b/i);
-			const sid = sidMatch ? Number(sidMatch[1]) : null;
+			// detect startId/sid/start-id tokens in the message
+			// For commands being applied (RemoveNodeCommand, etc.), use the first startId BEFORE "reason=" 
+			// since that's the target. The startId in the reason parameter is secondary.
+			let sid: number | null = null;
+			const reasonIndex = message.indexOf('reason=');
+			if (reasonIndex > 0) {
+				// Extract startId before the reason parameter
+				const beforeReason = message.substring(0, reasonIndex);
+				const sidMatch = beforeReason.match(/\b(?:startId|start-id|sid)=(\d+)\b/i);
+				sid = sidMatch ? Number(sidMatch[1]) : null;
+			}
+			// If no startId found before reason, or no reason param, check the full message
+			if (sid === null) {
+				const sidMatch = message.match(/\b(?:startId|start-id|sid)=(\d+)\b/i) || raw.match(/\b(?:startId|start-id|sid)=(\d+)\b/i);
+				sid = sidMatch ? Number(sidMatch[1]) : null;
+			}
+			
+			// Add sid to the event
+			e.sid = sid;
+			
+			// Parse database update diffs for highlighting
+			if (/Updated database from DatabaseInfo\{/.test(message)) {
+				// Extract DatabaseInfo content by counting braces
+				const extractDbInfo = (text: string, marker: string) => {
+					const startIdx = text.indexOf(marker);
+					if (startIdx === -1) return null;
+					const openIdx = text.indexOf('{', startIdx);
+					if (openIdx === -1) return null;
+					let depth = 1;
+					let i = openIdx + 1;
+					while (i < text.length && depth > 0) {
+						if (text[i] === '{') depth++;
+						else if (text[i] === '}') depth--;
+						i++;
+					}
+					return depth === 0 ? text.substring(openIdx + 1, i - 1) : null;
+				};
+				
+				const fromContent = extractDbInfo(message, 'from DatabaseInfo{');
+				const toContent = extractDbInfo(message, 'to DatabaseInfo{');
+				
+				if (fromContent && toContent) {
+					const parseDbInfo = (str: string) => {
+						const obj: Record<string, any> = {};
+						// Parse key=value pairs, handling nested braces
+						let i = 0;
+						while (i < str.length) {
+							// Skip whitespace
+							while (i < str.length && /\s/.test(str[i])) i++;
+							if (i >= str.length) break;
+							
+							// Find next key (letters, numbers, hyphens)
+							const eqIdx = str.indexOf('=', i);
+							if (eqIdx === -1) break;
+							
+							const key = str.substring(i, eqIdx).trim();
+							if (!key) { i = eqIdx + 1; continue; }
+							
+							// Find value (until comma or end, respecting braces)
+							let valStart = eqIdx + 1;
+							let valEnd = valStart;
+							let depth = 0;
+							while (valEnd < str.length) {
+								if (str[valEnd] === '{') depth++;
+								else if (str[valEnd] === '}') depth--;
+								else if (str[valEnd] === ',' && depth === 0) break;
+								valEnd++;
+							}
+							const value = str.substring(valStart, valEnd).trim();
+							obj[key] = value;
+							i = valEnd + 1; // Skip comma and continue
+						}
+						return obj;
+					};
+					e.dbDiff = { from: parseDbInfo(fromContent), to: parseDbInfo(toContent) };
+				}
+			}
+			
 			const typeMatch = message.match(/\btype=([A-Z]{2,3})\b/);
+			const hostIdMatch = message.match(/\bhostId=([^,\s]+)/) || raw.match(/\bhostId=([^,\s]+)/);
 			const hostAndPortMatch = message.match(/hostAndPort=([^,\s]+)/);
 			const addressMatch = message.match(/\baddress=([^,\s]+)/);
 			const ipPortMatch = message.match(/(\d+\.\d+\.\d+\.\d+:\d+)/);
 			const instType = typeMatch ? typeMatch[1] : undefined;
-			const instAddr = (hostAndPortMatch && hostAndPortMatch[1]) || (addressMatch && addressMatch[1]) || (ipPortMatch && ipPortMatch[1]) || undefined;
+			// Prefer hostId over hostAndPort, and filter out <LOCAL
+			const hostAndPort = hostAndPortMatch && hostAndPortMatch[1];
+			const cleanHostAndPort = (hostAndPort && !hostAndPort.startsWith('<LOCAL')) ? hostAndPort : undefined;
+			const instAddr = (hostIdMatch && hostIdMatch[1]) || cleanHostAndPort || (addressMatch && addressMatch[1]) || (ipPortMatch && ipPortMatch[1]) || undefined;
 			
 			// Capture database state transitions (same logic as before)
 			let capturedDb = false;
@@ -374,12 +675,23 @@ async function handleLoadDiagnose(request: any) {
 			// attach sid occurrences
 			if (sid !== null) {
 				if (instType) sidTypeMap[sid] = sidTypeMap[sid] || instType;
-				if (instAddr) sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
+				// Only store address if it's good (not <LOCAL) OR if we don't have one yet
+				if (instAddr && !instAddr.startsWith('<LOCAL')) {
+					sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
+				} else if (instAddr && !sidAddressMap[sid]) {
+					// Store <LOCAL as fallback only if we have nothing else
+					sidAddressMap[sid] = instAddr;
+				}
 				const isAppliedStart = /\bApplied\s+StartNodes?Command\b/i.test(message);
-				const isRemoveOrShutdown = /\b(RemoveNodeCommand|ShutdownNodesCommand|ShutdownNodeCommand)\b/i.test(message);
+				// For RemoveNode/Shutdown commands, only record if it's the RESPONSE (Applied/DomainProcessCommandResponse)
+				// not the command application itself, to avoid recording admin's action on other processes
+				const isAppliedRemove = /\bApplied\s+(RemoveNodeCommand|ShutdownNodesCommand|ShutdownNodeCommand)\b/i.test(message);
 				const isDomainResponse = /DomainProcessCommandResponse/.test(message);
-				if (isAppliedStart || isRemoveOrShutdown || /\bApplying\s+RemoveNodeCommand\b/i.test(message) || /\bApplying\s+ShutdownNodesCommand\b/i.test(message) || isDomainResponse && isRemoveOrShutdown) {
-					startIdOccurrences.push({ process: e.process, sid, ts: e.ts, iso: e.iso, raw, type: instType || sidTypeMap[sid], address: instAddr || sidAddressMap[sid], isStart: !!isAppliedStart });
+				// record only if this is an applied start or an applied remove/shutdown response
+				if (isAppliedStart || isAppliedRemove || isDomainResponse) {
+					// Prefer address from sidAddressMap if current instAddr is "<LOCAL" or empty
+					const effectiveAddr = (instAddr && !instAddr.startsWith('<LOCAL')) ? instAddr : (sidAddressMap[sid] || instAddr);
+					startIdOccurrences.push({ process: e.process, sid, ts: e.ts, iso: e.iso, raw, type: instType || sidTypeMap[sid], address: effectiveAddr, isStart: !!isAppliedStart });
 				}
 			}
 		}
@@ -392,17 +704,20 @@ async function handleLoadDiagnose(request: any) {
 			if (occ.isStart) sidHasStart[occ.sid] = true;
 		}
 		
-		// build instances from startId occurrences
+		// build instances from startId occurrences: group by sid only (not by logging process)
 		const instancesMap: Record<string, { process: string; sid: number; start: number; end: number; firstIso?: string; lastIso?: string; type?: string; address?: string }> = {};
 		for (const occ of startIdOccurrences) {
-			const key = `${occ.process}:${occ.sid}`;
+			const key = `${occ.sid}`;
 			if (!instancesMap[key]) instancesMap[key] = { process: occ.process, sid: occ.sid, start: occ.ts, end: occ.ts, firstIso: occ.iso, lastIso: occ.iso, type: occ.type, address: occ.address };
 			else {
 				const cur = instancesMap[key];
 				if (occ.ts < cur.start) { cur.start = occ.ts; cur.firstIso = occ.iso; }
 				if (occ.ts > cur.end) { cur.end = occ.ts; cur.lastIso = occ.iso; }
 				if (!cur.type && occ.type) cur.type = occ.type;
-				if (!cur.address && occ.address) cur.address = occ.address;
+				// Prefer non-<LOCAL addresses over existing ones
+				if (occ.address && (!cur.address || (cur.address.startsWith('<LOCAL') && !occ.address.startsWith('<LOCAL')))) {
+					cur.address = occ.address;
+				}
 			}
 		}
 		
@@ -477,12 +792,13 @@ Bun.serve({
 		if (url.pathname === "/list-tickets") return handleListTickets(req);
 		if (url.pathname === "/list-diagnose-packages") return handleListDiagnosePackages(req);
 		if (url.pathname === "/list-servers") return handleListServers(req);
+		if (url.pathname === "/server-time-ranges") return handleServerTimeRanges(req);
 		if (url.pathname === "/load-diagnose") return handleLoadDiagnose(req);
 
 		// default to serving static files from ./public
-		// map / and /nuosupport/* -> /public/index.html (for SPA routing)
+		// map /, /nuosupport, and /nuosupport/* -> /public/index.html (for SPA routing)
 		let pathname = url.pathname;
-		if (pathname === "/" || pathname.startsWith("/nuosupport/")) {
+		if (pathname === "/" || pathname === "/nuosupport" || pathname.startsWith("/nuosupport/")) {
 			pathname = "/index.html";
 		}
 		const filePath = `public${pathname}`;

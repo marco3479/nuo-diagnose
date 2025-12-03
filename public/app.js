@@ -17133,13 +17133,15 @@ function assert(test) {
 var jsx_dev_runtime = __toESM(require_jsx_dev_runtime(), 1);
 function StackApp() {
   const [path, setPath] = import_react.useState("tests/mock/nuoadmin.log");
-  const [loadMode, setLoadMode] = import_react.useState("nuosupport");
+  const initialMode = window.location.pathname === "/" || window.location.pathname.startsWith("/nuosupport") ? "nuosupport" : "file";
+  const [loadMode, setLoadMode] = import_react.useState(initialMode);
   const [zdTickets, setZdTickets] = import_react.useState([]);
   const [selectedTicket, setSelectedTicket] = import_react.useState("");
   const [diagnosePackages, setDiagnosePackages] = import_react.useState([]);
   const [selectedPackage, setSelectedPackage] = import_react.useState("");
   const [servers, setServers] = import_react.useState([]);
   const [selectedServer, setSelectedServer] = import_react.useState("");
+  const [serverTimeRanges, setServerTimeRanges] = import_react.useState([]);
   const [instances, setInstances] = import_react.useState([]);
   const [events, setEvents] = import_react.useState([]);
   const [dbStates, setDbStates] = import_react.useState({});
@@ -17154,8 +17156,8 @@ function StackApp() {
   const [loading, setLoading] = import_react.useState(false);
   const [loadedServer, setLoadedServer] = import_react.useState("");
   const [filterType, setFilterType] = import_react.useState("ALL");
-  const [filterAddr, setFilterAddr] = import_react.useState("");
-  const [filterSid, setFilterSid] = import_react.useState("");
+  const [filterServers, setFilterServers] = import_react.useState(new Set);
+  const [filterSids, setFilterSids] = import_react.useState(new Set);
   const [sortKey, setSortKey] = import_react.useState("sid");
   const [sortDir, setSortDir] = import_react.useState("asc");
   const [cursorX, setCursorX] = import_react.useState(null);
@@ -17168,6 +17170,32 @@ function StackApp() {
   const [panelFocus, setPanelFocus] = import_react.useState("timeline");
   const [focusedTimelineItem, setFocusedTimelineItem] = import_react.useState(null);
   const [hoveredBar, setHoveredBar] = import_react.useState(null);
+  const [mousePos, setMousePos] = import_react.useState({ x: 0, y: 0 });
+  const [theme, setTheme] = import_react.useState("dark");
+  const [apsCollapsed, setApsCollapsed] = import_react.useState(false);
+  const [serverDropdownOpen, setServerDropdownOpen] = import_react.useState(false);
+  const [sidDropdownOpen, setSidDropdownOpen] = import_react.useState(false);
+  import_react.useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+  import_react.useEffect(() => {
+    const handleClickOutside = (e) => {
+      const target = e.target;
+      if (serverDropdownOpen && target && target.closest && !target.closest(".server-dropdown-container")) {
+        setServerDropdownOpen(false);
+      }
+      if (sidDropdownOpen && target && target.closest && !target.closest(".sid-dropdown-container")) {
+        setSidDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [serverDropdownOpen, sidDropdownOpen]);
+  import_react.useEffect(() => {
+    if (loadMode === "nuosupport" && window.location.pathname === "/") {
+      window.history.replaceState({}, "", "/nuosupport");
+    }
+  }, [loadMode]);
   async function load(p = path) {
     setLoading(true);
     try {
@@ -17238,7 +17266,9 @@ function StackApp() {
   }
   import_react.useEffect(() => {
     const urlPath = window.location.pathname;
-    const match = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+    const fullMatch = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+    const packageMatch = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)$/);
+    const ticketMatch = urlPath.match(/\/nuosupport\/([^\/]+)$/);
     console.log("Fetching ZD tickets...");
     fetch("/list-tickets").then((res) => {
       console.log("Tickets response status:", res.status);
@@ -17248,12 +17278,18 @@ function StackApp() {
       if (json.tickets) {
         console.log(`Found ${json.tickets.length} tickets`);
         setZdTickets(json.tickets);
-        if (match) {
-          const [, ticket, pkg, server] = match;
-          setLoadMode("nuosupport");
+        if (fullMatch) {
+          const [, ticket, pkg, server] = fullMatch;
           setSelectedTicket(ticket);
           window.__initialPackage = pkg;
           window.__initialServer = server;
+        } else if (packageMatch) {
+          const [, ticket, pkg] = packageMatch;
+          setSelectedTicket(ticket);
+          window.__initialPackage = pkg;
+        } else if (ticketMatch) {
+          const [, ticket] = ticketMatch;
+          setSelectedTicket(ticket);
         }
       } else if (json.error) {
         console.error("Error from server:", json.error);
@@ -17265,6 +17301,13 @@ function StackApp() {
       setDiagnosePackages([]);
       setSelectedPackage("");
       return;
+    }
+    setSelectedPackage("");
+    setSelectedServer("");
+    setServers([]);
+    setServerTimeRanges([]);
+    if (loadMode === "nuosupport" && !window.__initialPackage) {
+      window.history.pushState({}, "", `/nuosupport/${selectedTicket}`);
     }
     fetch(`/list-diagnose-packages?ticket=${encodeURIComponent(selectedTicket)}`).then((res) => res.json()).then((json) => {
       if (json.packages) {
@@ -17283,23 +17326,62 @@ function StackApp() {
     if (!selectedTicket || !selectedPackage) {
       setServers([]);
       setSelectedServer("");
+      setServerTimeRanges([]);
       return;
+    }
+    if (!diagnosePackages.includes(selectedPackage)) {
+      console.log("Skipping server fetch - package not in current ticket");
+      return;
+    }
+    if (loadMode === "nuosupport" && !window.__initialServer) {
+      window.history.pushState({}, "", `/nuosupport/${selectedTicket}/${selectedPackage}`);
     }
     setSelectedServer("");
     setServers([]);
-    fetch(`/list-servers?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}`).then((res) => res.json()).then((json) => {
-      if (json.servers) {
-        setServers(json.servers);
+    setServerTimeRanges([]);
+    setLoading(true);
+    console.log("Fetching server time ranges for:", selectedTicket, selectedPackage);
+    const controller = new AbortController;
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      console.error("Server time ranges fetch timed out after 30s");
+    }, 30000);
+    fetch(`/server-time-ranges?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}`, {
+      signal: controller.signal
+    }).then((res) => {
+      clearTimeout(timeoutId);
+      console.log("Server time ranges response status:", res.status);
+      return res.json();
+    }).then((json) => {
+      console.log("Server time ranges data:", json);
+      setLoading(false);
+      if (json.error) {
+        console.error("Server time ranges error:", json.error);
+        return;
+      }
+      if (json.serverRanges) {
+        console.log(`Loaded ${json.serverRanges.length} server ranges`);
+        setServerTimeRanges(json.serverRanges);
+        const servers2 = json.serverRanges.map((r) => r.server);
+        setServers(servers2);
         const initialServer = window.__initialServer;
-        if (initialServer && json.servers.includes(initialServer)) {
+        if (initialServer && servers2.includes(initialServer)) {
           setSelectedServer(initialServer);
           delete window.__initialServer;
-        } else if (json.servers.length > 0) {
-          setSelectedServer(json.servers[0]);
+        } else if (servers2.length > 0) {
+          setSelectedServer(servers2[0]);
         }
       }
-    }).catch((e) => console.error("Failed to load servers:", e));
-  }, [selectedTicket, selectedPackage]);
+    }).catch((e) => {
+      clearTimeout(timeoutId);
+      setLoading(false);
+      if (e.name === "AbortError") {
+        console.error("Server time ranges fetch was aborted (timeout)");
+      } else {
+        console.error("Failed to load server time ranges:", e);
+      }
+    });
+  }, [selectedTicket, selectedPackage, diagnosePackages]);
   import_react.useEffect(() => {
     if (selectedServer && selectedTicket && selectedPackage && loadMode === "nuosupport") {
       const newPath = `/nuosupport/${selectedTicket}/${selectedPackage}/${selectedServer}`;
@@ -17353,24 +17435,37 @@ function StackApp() {
       document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [dragging, globalStart, globalEnd, rangeStart, rangeEnd]);
-  const visible = instances.filter((i) => i.end >= gStart && i.start <= gEnd);
-  const rowsBySid = {};
+  const visible = instances.filter((i) => {
+    const removeEvents = events.filter((e) => {
+      return e.sid === i.sid && /RemoveNodeCommand/.test(e.message ?? "");
+    });
+    const effectiveEnd = removeEvents.length > 0 ? i.end : globalEnd;
+    return effectiveEnd >= gStart && i.start <= gEnd;
+  });
+  const allRowsBySid = {};
   for (const inst of instances) {
     const key = String(inst.sid);
-    (rowsBySid[key] ||= []).push(inst);
+    (allRowsBySid[key] ||= []).push(inst);
   }
-  const instanceType = (i) => i.type ?? rowsBySid[String(i.sid)]?.find((x) => x.type)?.type ?? "";
+  const instanceType = (i) => i.type ?? allRowsBySid[String(i.sid)]?.find((x) => x.type)?.type ?? "";
   const typeOptions = Array.from(new Set(instances.map(instanceType).filter(Boolean))).sort();
+  const allServers = Array.from(new Set(instances.map((i) => i.address).filter(Boolean))).sort();
+  const allSids = Array.from(new Set(instances.map((i) => String(i.sid)))).sort((a, b) => Number(a) - Number(b));
   const filtered = visible.filter((i) => {
     const t = instanceType(i);
     if (filterType !== "ALL" && t !== filterType)
       return false;
-    if (filterAddr.trim() && !String(i.address ?? "").toLowerCase().includes(filterAddr.trim().toLowerCase()))
+    if (filterServers.size > 0 && !filterServers.has(i.address ?? ""))
       return false;
-    if (filterSid.trim() && !String(i.sid).includes(filterSid.trim()))
+    if (filterSids.size > 0 && !filterSids.has(String(i.sid)))
       return false;
     return true;
   });
+  const rowsBySid = {};
+  for (const inst of filtered) {
+    const key = String(inst.sid);
+    (rowsBySid[key] ||= []).push(inst);
+  }
   const comparator = (a, b) => {
     let va;
     let vb;
@@ -17495,9 +17590,11 @@ function StackApp() {
               if (row && row.type === "db") {
                 setSelectedDb(row.key);
                 setSelectedSid(null);
+                setSelectedUnclassified(false);
               } else if (row && row.type === "instance" && "instance" in row && row.instance) {
                 setSelectedSid(row.instance.sid);
                 setSelectedDb(null);
+                setSelectedUnclassified(false);
               }
             }
           }
@@ -17580,10 +17677,12 @@ function StackApp() {
               if (row && row.type === "db") {
                 setSelectedDb(row.key);
                 setSelectedSid(null);
+                setSelectedUnclassified(false);
                 setFocusedTimelineItem({ type: "db", key: row.key, index: 0 });
               } else if (row && row.type === "instance" && "instance" in row && row.instance) {
                 setSelectedSid(row.instance.sid);
                 setSelectedDb(null);
+                setSelectedUnclassified(false);
                 setFocusedTimelineItem({ type: "sid", key: String(row.instance.sid), index: 0 });
               }
             }
@@ -17598,14 +17697,22 @@ function StackApp() {
         if (selectedUnclassified) {
           eventCount = unclassifiedEvents.length;
         } else if (selectedDb !== null) {
-          eventCount = (dbStates[selectedDb] || []).length;
+          const dbStateEvents = dbStates[selectedDb] || [];
+          const dbSpecificEvents = databaseEvents.filter((e2) => {
+            const msg = e2.message ?? "";
+            const raw = e2.raw ?? "";
+            return msg.includes(selectedDb) || raw.includes(selectedDb);
+          });
+          eventCount = dbStateEvents.length + dbSpecificEvents.length;
         } else if (selectedSid !== null) {
-          const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, "i");
           const instsForSid = rowsBySid[String(selectedSid)] || [];
           const related = events.filter((e2) => {
-            const raw = e2.raw ?? "";
-            const msg = e2.message ?? "";
-            return sidRe.test(raw) || sidRe.test(msg);
+            if (e2.sid === selectedSid)
+              return true;
+            if (e2.sid === null && instsForSid.length > 0) {
+              return instsForSid.some((inst) => e2.ts >= inst.start && e2.ts <= inst.end);
+            }
+            return false;
           });
           const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
           eventCount = related.length + frpForSid.length;
@@ -17636,22 +17743,22 @@ function StackApp() {
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [focusedRowIndex, focusedEventIndex, focusedTimelineItem, panelFocus, allTableRows, selectedSid, selectedDb, selectedUnclassified, dbStates, events, failureProtocols, rowsBySid, addresses, groupsByAddress, hasUnclassified]);
+  }, [focusedRowIndex, focusedEventIndex, focusedTimelineItem, panelFocus, allTableRows, selectedSid, selectedDb, selectedUnclassified, dbStates, databaseEvents, events, failureProtocols, rowsBySid, addresses, groupsByAddress, hasUnclassified]);
   return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
     className: "app",
     children: [
       /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
         className: "controls",
-        children: [
-          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-            style: { display: "flex", gap: 16, alignItems: "center", marginBottom: 12 },
-            children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+        children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+          style: { display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 8, width: "100%" },
+          children: [
+            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+              style: { display: "flex", alignItems: "center", gap: 6 },
               children: [
                 "Load from:",
                 /* @__PURE__ */ jsx_dev_runtime.jsxDEV("select", {
                   value: loadMode,
                   onChange: (e) => setLoadMode(e.target.value),
-                  style: { marginLeft: 6 },
                   children: [
                     /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
                       value: "nuosupport",
@@ -17664,144 +17771,289 @@ function StackApp() {
                   ]
                 }, undefined, true, undefined, this)
               ]
-            }, undefined, true, undefined, this)
-          }, undefined, false, undefined, this),
-          loadMode === "file" ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-            style: { display: "flex", gap: 8, alignItems: "center" },
+            }, undefined, true, undefined, this),
+            loadMode === "file" ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV(jsx_dev_runtime.Fragment, {
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                  style: { display: "flex", alignItems: "center", gap: 6 },
+                  children: [
+                    "Log path:",
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
+                      type: "text",
+                      value: path,
+                      onChange: (e) => setPath(e.target.value),
+                      style: { width: 360 }
+                    }, undefined, false, undefined, this)
+                  ]
+                }, undefined, true, undefined, this),
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                  onClick: () => load(),
+                  disabled: loading,
+                  children: "Load"
+                }, undefined, false, undefined, this)
+              ]
+            }, undefined, true, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV(jsx_dev_runtime.Fragment, {
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                  style: { display: "flex", alignItems: "center", gap: 6 },
+                  children: [
+                    "ZD Ticket:",
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("select", {
+                      value: selectedTicket,
+                      onChange: (e) => setSelectedTicket(e.target.value),
+                      style: { minWidth: 120 },
+                      children: [
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
+                          value: "",
+                          children: "Select ticket..."
+                        }, undefined, false, undefined, this),
+                        zdTickets.slice().reverse().map((t) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
+                          value: t,
+                          children: t
+                        }, t, false, undefined, this))
+                      ]
+                    }, undefined, true, undefined, this)
+                  ]
+                }, undefined, true, undefined, this),
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                  style: { display: "flex", alignItems: "center", gap: 6 },
+                  children: [
+                    "Diagnose Package:",
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("select", {
+                      value: selectedPackage,
+                      onChange: (e) => setSelectedPackage(e.target.value),
+                      style: { minWidth: 200 },
+                      disabled: !selectedTicket,
+                      children: [
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
+                          value: "",
+                          children: "Select package..."
+                        }, undefined, false, undefined, this),
+                        diagnosePackages.map((p) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
+                          value: p,
+                          children: p
+                        }, p, false, undefined, this))
+                      ]
+                    }, undefined, true, undefined, this)
+                  ]
+                }, undefined, true, undefined, this),
+                loading && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                  style: { color: "var(--text-muted)", fontSize: 13 },
+                  children: "Loading..."
+                }, undefined, false, undefined, this)
+              ]
+            }, undefined, true, undefined, this),
+            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+              onClick: () => setTheme(theme === "dark" ? "light" : "dark"),
+              style: { marginLeft: "auto", justifySelf: "flex-end", fontSize: 16 },
+              title: `Switch to ${theme === "dark" ? "light" : "dark"} theme`,
+              children: theme === "dark" ? "◐" : "◑"
+            }, undefined, false, undefined, this)
+          ]
+        }, undefined, true, undefined, this)
+      }, undefined, false, undefined, this),
+      loadMode === "nuosupport" && selectedPackage && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+        style: { marginBottom: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 6, padding: 12 },
+        children: [
+          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+            style: { fontSize: 13, fontWeight: 600, marginBottom: apsCollapsed && selectedServer ? 8 : apsCollapsed ? 0 : 8, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" },
+            onClick: () => setApsCollapsed(!apsCollapsed),
             children: [
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
-                children: [
-                  "Log path: ",
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
-                    value: path,
-                    onChange: (e) => setPath(e.target.value),
-                    style: { width: 360 }
-                  }, undefined, false, undefined, this)
-                ]
-              }, undefined, true, undefined, this),
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
-                onClick: () => load(),
-                disabled: loading,
-                children: "Load"
-              }, undefined, false, undefined, this)
+              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                style: { fontSize: 11, transform: apsCollapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" },
+                children: "▼"
+              }, undefined, false, undefined, this),
+              "Logs from servers"
             ]
-          }, undefined, true, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-            style: { display: "flex", flexDirection: "column", gap: 8 },
-            children: [
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                style: { display: "flex", gap: 8, alignItems: "center" },
-                children: [
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
-                    children: [
-                      "ZD Ticket:",
-                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("select", {
-                        value: selectedTicket,
-                        onChange: (e) => setSelectedTicket(e.target.value),
-                        style: { marginLeft: 6, minWidth: 120 },
-                        children: [
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                            value: "",
-                            children: "Select ticket..."
-                          }, undefined, false, undefined, this),
-                          zdTickets.slice().reverse().map((t) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                            value: t,
-                            children: t
-                          }, t, false, undefined, this))
-                        ]
-                      }, undefined, true, undefined, this),
-                      zdTickets.length > 0 && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
-                        style: { fontSize: 11, color: "#7da3b8", marginLeft: 6 },
-                        children: [
-                          "(",
-                          zdTickets.length,
-                          " tickets loaded)"
-                        ]
-                      }, undefined, true, undefined, this)
-                    ]
-                  }, undefined, true, undefined, this),
-                  zdTickets.length === 0 && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
-                    style: { fontSize: 11, color: "#ff8888" },
-                    children: "Loading tickets... (Check console for errors)"
-                  }, undefined, false, undefined, this),
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
-                    children: [
-                      "Diagnose Package:",
-                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("select", {
-                        value: selectedPackage,
-                        onChange: (e) => setSelectedPackage(e.target.value),
-                        style: { marginLeft: 6, minWidth: 200 },
-                        disabled: !selectedTicket,
-                        children: [
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                            value: "",
-                            children: "Select package..."
-                          }, undefined, false, undefined, this),
-                          diagnosePackages.map((p) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                            value: p,
-                            children: p
-                          }, p, false, undefined, this))
-                        ]
-                      }, undefined, true, undefined, this)
-                    ]
-                  }, undefined, true, undefined, this),
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
-                    children: [
-                      "Server:",
-                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("select", {
-                        value: selectedServer,
-                        onChange: (e) => setSelectedServer(e.target.value),
-                        onKeyDown: (e) => {
-                          if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-                            const select = e.target;
-                            const currentIndex = select.selectedIndex;
-                            let newIndex = currentIndex;
-                            if (e.key === "ArrowDown" && currentIndex < select.options.length - 1) {
-                              newIndex = currentIndex + 1;
-                            } else if (e.key === "ArrowUp" && currentIndex > 0) {
-                              newIndex = currentIndex - 1;
+          }, undefined, true, undefined, this),
+          apsCollapsed && selectedServer && (() => {
+            const allStarts = serverTimeRanges.map((r) => r.start);
+            const allEnds = serverTimeRanges.map((r) => r.end);
+            const minTs = Math.min(...allStarts);
+            const maxTs = Math.max(...allEnds);
+            const timeSpan = maxTs - minTs || 1;
+            const selectedRange = serverTimeRanges.find((r) => r.server === selectedServer);
+            if (!selectedRange)
+              return null;
+            const left = (selectedRange.start - minTs) / timeSpan * 100;
+            const width = (selectedRange.end - selectedRange.start) / timeSpan * 100;
+            return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+              style: { position: "relative" },
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-hint)", marginBottom: 4, paddingLeft: 200, paddingRight: 8 },
+                  children: [
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                      children: new Date(minTs).toISOString().replace("T", " ").substring(0, 19)
+                    }, undefined, false, undefined, this),
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                      children: new Date(maxTs).toISOString().replace("T", " ").substring(0, 19)
+                    }, undefined, false, undefined, this)
+                  ]
+                }, undefined, true, undefined, this),
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" },
+                  onMouseEnter: (e) => {
+                    setMousePos({ x: e.clientX, y: e.clientY });
+                    setHoveredBar({
+                      type: "process",
+                      id: selectedRange.server,
+                      content: `${selectedRange.server}
+${selectedRange.startIso} → ${selectedRange.endIso}
+Duration: ${Math.round((selectedRange.end - selectedRange.start) / 1000 / 60)} minutes`
+                    });
+                  },
+                  onMouseLeave: () => setHoveredBar(null),
+                  onMouseMove: (e) => setMousePos({ x: e.clientX, y: e.clientY }),
+                  children: [
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: {
+                        width: 190,
+                        fontSize: 12,
+                        color: "var(--accent)",
+                        fontWeight: 600,
+                        textAlign: "right",
+                        paddingRight: 8,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap"
+                      },
+                      children: selectedRange.server
+                    }, undefined, false, undefined, this),
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { flex: 1, position: "relative", height: 20 },
+                      children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                        style: {
+                          position: "absolute",
+                          left: `${left}%`,
+                          width: `${width}%`,
+                          height: "100%",
+                          background: "hsl(30, 60%, 45%)",
+                          borderRadius: 3,
+                          border: "2px solid hsl(30, 65%, 40%)",
+                          boxShadow: "0 0 8px rgba(160, 100, 40, 0.4)"
+                        }
+                      }, undefined, false, undefined, this)
+                    }, undefined, false, undefined, this)
+                  ]
+                }, undefined, true, undefined, this)
+              ]
+            }, undefined, true, undefined, this);
+          })(),
+          !apsCollapsed && (serverTimeRanges.length === 0 ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+            style: { color: "var(--text-hint)", fontSize: 13, padding: 8 },
+            children: "Loading APs..."
+          }, undefined, false, undefined, this) : function() {
+            const allStarts = serverTimeRanges.map((r) => r.start);
+            const allEnds = serverTimeRanges.map((r) => r.end);
+            const minTs = Math.min(...allStarts);
+            const maxTs = Math.max(...allEnds);
+            const timeSpan = maxTs - minTs || 1;
+            return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+              style: { position: "relative" },
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-hint)", marginBottom: 4, paddingLeft: 200, paddingRight: 8 },
+                  children: [
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                      children: new Date(minTs).toISOString().replace("T", " ").substring(0, 19)
+                    }, undefined, false, undefined, this),
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                      children: new Date(maxTs).toISOString().replace("T", " ").substring(0, 19)
+                    }, undefined, false, undefined, this)
+                  ]
+                }, undefined, true, undefined, this),
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { display: "flex", flexDirection: "column", gap: 2 },
+                  children: serverTimeRanges.map((range, idx) => {
+                    const left = (range.start - minTs) / timeSpan * 100;
+                    const width = (range.end - range.start) / timeSpan * 100;
+                    const isSelected = selectedServer === range.server;
+                    return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" },
+                      onClick: () => setSelectedServer(range.server),
+                      onMouseEnter: (e) => {
+                        setMousePos({ x: e.clientX, y: e.clientY });
+                        setHoveredBar({
+                          type: "process",
+                          id: range.server,
+                          content: `${range.server}
+${range.startIso} → ${range.endIso}
+Duration: ${Math.round((range.end - range.start) / 1000 / 60)} minutes`
+                        });
+                      },
+                      onMouseLeave: () => setHoveredBar(null),
+                      onMouseMove: (e) => setMousePos({ x: e.clientX, y: e.clientY }),
+                      children: [
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: {
+                            width: 190,
+                            fontSize: 12,
+                            color: isSelected ? "var(--accent)" : "var(--text-secondary)",
+                            fontWeight: isSelected ? 600 : 400,
+                            textAlign: "right",
+                            paddingRight: 8,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap"
+                          },
+                          children: range.server
+                        }, undefined, false, undefined, this),
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: { flex: 1, position: "relative", height: 20 },
+                          children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: {
+                              position: "absolute",
+                              left: `${left}%`,
+                              width: `${width}%`,
+                              height: "100%",
+                              background: isSelected ? "hsl(30, 60%, 45%)" : "hsl(30, 50%, 55%)",
+                              borderRadius: 3,
+                              border: isSelected ? "2px solid hsl(30, 65%, 40%)" : "1px solid rgba(255, 255, 255, 0.2)",
+                              boxShadow: isSelected ? "0 0 8px rgba(160, 100, 40, 0.4)" : "none",
+                              transition: "all 0.2s ease"
                             }
-                            if (newIndex !== currentIndex && newIndex > 0) {
-                              const newValue = select.options[newIndex].value;
-                              if (newValue) {
-                                setSelectedServer(newValue);
-                              }
-                            }
-                          }
-                        },
-                        style: { marginLeft: 6, minWidth: 250 },
-                        disabled: !selectedPackage,
-                        children: [
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                            value: "",
-                            children: "Select server..."
-                          }, undefined, false, undefined, this),
-                          servers.map((s) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                            value: s,
-                            children: s
-                          }, s, false, undefined, this))
-                        ]
-                      }, undefined, true, undefined, this)
-                    ]
-                  }, undefined, true, undefined, this),
-                  loading && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
-                    style: { color: "#7da3b8", fontSize: 13 },
-                    children: "Loading..."
-                  }, undefined, false, undefined, this)
-                ]
-              }, undefined, true, undefined, this),
-              loadedServer && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                style: { fontSize: 13, color: "#7da3b8", fontStyle: "italic" },
-                children: [
-                  "Loaded all nuoadmin.log* files from: ",
-                  loadedServer
-                ]
-              }, undefined, true, undefined, this)
-            ]
-          }, undefined, true, undefined, this)
+                          }, undefined, false, undefined, this)
+                        }, undefined, false, undefined, this)
+                      ]
+                    }, range.server, true, undefined, this);
+                  })
+                }, undefined, false, undefined, this)
+              ]
+            }, undefined, true, undefined, this);
+          }())
         ]
       }, undefined, true, undefined, this),
-      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+      loading && loadMode === "nuosupport" && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "60px 20px",
+          color: "var(--text-muted)",
+          fontSize: 14
+        },
+        children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+          style: { textAlign: "center" },
+          children: [
+            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+              style: {
+                width: 40,
+                height: 40,
+                border: "3px solid var(--border-primary)",
+                borderTopColor: "var(--accent)",
+                borderRadius: "50%",
+                animation: "spin 1s linear infinite",
+                margin: "0 auto 12px"
+              }
+            }, undefined, false, undefined, this),
+            "Loading data as per AP..."
+          ]
+        }, undefined, true, undefined, this)
+      }, undefined, false, undefined, this),
+      (!loading || loadMode !== "nuosupport") && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
         className: "timeline",
+        onMouseMove: (e) => setMousePos({ x: e.clientX, y: e.clientY }),
         children: [
           Object.keys(dbStates || {}).length > 0 ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
             className: "stack-area",
@@ -17836,13 +18088,9 @@ function StackApp() {
                     /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                       className: "stack-track",
                       children: [
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          className: "selection-overlay",
-                          style: { left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%` }
-                        }, undefined, false, undefined, this),
                         segs.map((seg, idx) => {
-                          const left = (seg.start - globalStart) / (globalEnd - globalStart) * 100;
-                          const right = (seg.end - globalStart) / (globalEnd - globalStart) * 100;
+                          const left = (seg.start - gStart) / (gEnd - gStart) * 100;
+                          const right = (seg.end - gStart) / (gEnd - gStart) * 100;
                           const width = Math.max(0.2, right - left);
                           const bg = stateColor(seg.state);
                           const tooltipContent = `${seg.state} — ${seg.iso}
@@ -17874,7 +18122,7 @@ ${seg.message}`;
                           const groupedEvents = [];
                           const groupThreshold = 0.5;
                           dbEvents.forEach((ev) => {
-                            const left = (ev.ts - globalStart) / (globalEnd - globalStart) * 100;
+                            const left = (ev.ts - gStart) / (gEnd - gStart) * 100;
                             const lastGroup = groupedEvents[groupedEvents.length - 1];
                             if (lastGroup && Math.abs(left - lastGroup.left) < groupThreshold) {
                               lastGroup.events.push(ev);
@@ -17964,37 +18212,279 @@ ${ev.raw ?? ev.message}`).join(`
                 }, undefined, true, undefined, this),
                 /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                   className: "stack-track",
-                  children: [
-                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                      className: "selection-overlay",
-                      style: { left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%` }
-                    }, undefined, false, undefined, this),
-                    unclassifiedEvents.map((ev, idx) => {
-                      const left = (ev.ts - globalStart) / (globalEnd - globalStart) * 100;
-                      const dotId = `unclassified-${idx}`;
-                      return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                        className: "frp-dot",
-                        style: {
-                          left: `${left}%`,
-                          position: "absolute",
-                          top: "2px",
-                          width: 8,
-                          height: 8,
-                          background: "hsla(280, 60%, 50%, 0.9)",
-                          transform: "rotate(45deg)",
-                          zIndex: 10,
-                          anchorName: `--${dotId}`
-                        },
-                        onMouseEnter: () => setHoveredBar({ type: "frp", id: dotId, content: `${ev.iso}
+                  children: unclassifiedEvents.map((ev, idx) => {
+                    const left = (ev.ts - gStart) / (gEnd - gStart) * 100;
+                    const dotId = `unclassified-${idx}`;
+                    return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      className: "frp-dot",
+                      style: {
+                        left: `${left}%`,
+                        position: "absolute",
+                        top: "2px",
+                        width: 8,
+                        height: 8,
+                        background: "hsla(280, 60%, 50%, 0.9)",
+                        transform: "rotate(45deg)",
+                        zIndex: 10,
+                        anchorName: `--${dotId}`
+                      },
+                      onMouseEnter: () => setHoveredBar({ type: "frp", id: dotId, content: `${ev.iso}
 ${ev.raw ?? ev.message}` }),
-                        onMouseLeave: () => setHoveredBar(null)
-                      }, dotId, false, undefined, this);
-                    })
-                  ]
-                }, undefined, true, undefined, this)
+                      onMouseLeave: () => setHoveredBar(null)
+                    }, dotId, false, undefined, this);
+                  })
+                }, undefined, false, undefined, this)
               ]
             }, undefined, true, undefined, this)
           }, undefined, false, undefined, this),
+          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+            style: { display: "flex", gap: 12, padding: "12px 0", borderTop: "1px solid var(--border-primary)", borderBottom: "1px solid var(--border-primary)", marginTop: 12, marginBottom: 12, alignItems: "center" },
+            children: [
+              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                className: "server-dropdown-container",
+                style: { position: "relative", display: "flex", gap: 8, alignItems: "center" },
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                    style: { fontSize: 12, color: "var(--text-muted)", minWidth: 50 },
+                    children: "Server:"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                    onClick: () => setServerDropdownOpen(!serverDropdownOpen),
+                    style: {
+                      padding: "4px 8px",
+                      background: "var(--input-bg)",
+                      border: "1px solid var(--input-border)",
+                      borderRadius: 4,
+                      color: "var(--text-primary)",
+                      fontSize: 12,
+                      cursor: "pointer",
+                      minWidth: 120,
+                      textAlign: "left",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center"
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                        children: filterServers.size === 0 ? "ALL" : `${filterServers.size} selected`
+                      }, undefined, false, undefined, this),
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                        style: { fontSize: 10 },
+                        children: serverDropdownOpen ? "▲" : "▼"
+                      }, undefined, false, undefined, this)
+                    ]
+                  }, undefined, true, undefined, this),
+                  serverDropdownOpen && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: {
+                      position: "absolute",
+                      top: "100%",
+                      left: 50,
+                      marginTop: 4,
+                      background: "var(--bg-secondary)",
+                      border: "1px solid var(--border-primary)",
+                      borderRadius: 4,
+                      padding: 8,
+                      zIndex: 1000,
+                      maxHeight: 300,
+                      overflowY: "auto",
+                      minWidth: 200,
+                      boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)"
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                        style: { display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", borderRadius: 3, fontWeight: 600 },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
+                            type: "checkbox",
+                            checked: filterServers.size === 0,
+                            onChange: (e) => {
+                              if (e.target.checked) {
+                                setFilterServers(new Set);
+                              }
+                            },
+                            style: { cursor: "pointer" }
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                            children: "ALL"
+                          }, undefined, false, undefined, this)
+                        ]
+                      }, undefined, true, undefined, this),
+                      allServers.map((server) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                        style: { display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", borderRadius: 3 },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
+                            type: "checkbox",
+                            checked: filterServers.size === 0 || filterServers.has(server),
+                            onChange: (e) => {
+                              const newSet = new Set(filterServers);
+                              if (e.target.checked) {
+                                newSet.add(server);
+                                if (newSet.size === allServers.length) {
+                                  setFilterServers(new Set);
+                                } else {
+                                  setFilterServers(newSet);
+                                }
+                              } else {
+                                if (filterServers.size === 0) {
+                                  const allExceptThis = new Set(allServers.filter((s) => s !== server));
+                                  setFilterServers(allExceptThis);
+                                } else {
+                                  newSet.delete(server);
+                                  setFilterServers(newSet);
+                                }
+                              }
+                            },
+                            style: { cursor: "pointer" }
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                            children: server
+                          }, undefined, false, undefined, this)
+                        ]
+                      }, server, true, undefined, this))
+                    ]
+                  }, undefined, true, undefined, this)
+                ]
+              }, undefined, true, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                className: "sid-dropdown-container",
+                style: { position: "relative", display: "flex", gap: 8, alignItems: "center" },
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                    style: { fontSize: 12, color: "var(--text-muted)", minWidth: 30 },
+                    children: "SID:"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                    onClick: () => setSidDropdownOpen(!sidDropdownOpen),
+                    style: {
+                      padding: "4px 8px",
+                      background: "var(--input-bg)",
+                      border: "1px solid var(--input-border)",
+                      borderRadius: 4,
+                      color: "var(--text-primary)",
+                      fontSize: 12,
+                      cursor: "pointer",
+                      minWidth: 100,
+                      textAlign: "left",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center"
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                        children: filterSids.size === 0 ? "ALL" : `${filterSids.size} selected`
+                      }, undefined, false, undefined, this),
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                        style: { fontSize: 10 },
+                        children: sidDropdownOpen ? "▲" : "▼"
+                      }, undefined, false, undefined, this)
+                    ]
+                  }, undefined, true, undefined, this),
+                  sidDropdownOpen && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: {
+                      position: "absolute",
+                      top: "100%",
+                      left: 30,
+                      marginTop: 4,
+                      background: "var(--bg-secondary)",
+                      border: "1px solid var(--border-primary)",
+                      borderRadius: 4,
+                      padding: 8,
+                      zIndex: 1000,
+                      maxHeight: 300,
+                      overflowY: "auto",
+                      minWidth: 150,
+                      boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)"
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                        style: { display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", borderRadius: 3, fontWeight: 600 },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
+                            type: "checkbox",
+                            checked: filterSids.size === 0,
+                            onChange: (e) => {
+                              if (e.target.checked) {
+                                setFilterSids(new Set);
+                              }
+                            },
+                            style: { cursor: "pointer" }
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                            children: "ALL"
+                          }, undefined, false, undefined, this)
+                        ]
+                      }, undefined, true, undefined, this),
+                      allSids.map((sid) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                        style: { display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", borderRadius: 3 },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
+                            type: "checkbox",
+                            checked: filterSids.size === 0 || filterSids.has(sid),
+                            onChange: (e) => {
+                              const newSet = new Set(filterSids);
+                              if (e.target.checked) {
+                                newSet.add(sid);
+                                if (newSet.size === allSids.length) {
+                                  setFilterSids(new Set);
+                                } else {
+                                  setFilterSids(newSet);
+                                }
+                              } else {
+                                if (filterSids.size === 0) {
+                                  const allExceptThis = new Set(allSids.filter((s) => s !== sid));
+                                  setFilterSids(allExceptThis);
+                                } else {
+                                  newSet.delete(sid);
+                                  setFilterSids(newSet);
+                                }
+                              }
+                            },
+                            style: { cursor: "pointer" }
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                            children: sid
+                          }, undefined, false, undefined, this)
+                        ]
+                      }, sid, true, undefined, this))
+                    ]
+                  }, undefined, true, undefined, this)
+                ]
+              }, undefined, true, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                style: { display: "flex", gap: 8, alignItems: "center" },
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("label", {
+                    style: { fontSize: 12, color: "var(--text-muted)", minWidth: 40 },
+                    children: "Type:"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("select", {
+                    value: filterType,
+                    onChange: (e) => setFilterType(e.target.value),
+                    style: { padding: "4px 8px", background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 4, color: "var(--text-primary)", fontSize: 12 },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
+                        value: "ALL",
+                        children: "ALL"
+                      }, undefined, false, undefined, this),
+                      typeOptions.map((t) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
+                        value: t,
+                        children: t
+                      }, t, false, undefined, this))
+                    ]
+                  }, undefined, true, undefined, this)
+                ]
+              }, undefined, true, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                onClick: () => {
+                  setFilterSids(new Set);
+                  setFilterType("ALL");
+                  setFilterServers(new Set);
+                },
+                style: { padding: "4px 12px", background: "var(--button-bg)", border: "1px solid var(--button-border)", borderRadius: 4, color: "var(--text-muted)", fontSize: 12, cursor: "pointer" },
+                children: "Reset filters"
+              }, undefined, false, undefined, this)
+            ]
+          }, undefined, true, undefined, this),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
             className: "stack-area",
             style: { position: "relative" },
@@ -18027,9 +18517,11 @@ ${ev.raw ?? ev.message}` }),
                     }, undefined, true, undefined, this),
                     sids.map((sid, sidIndexInGroup) => {
                       const procInst = (rowsBySid[sid] || []).sort((a, b) => a.start - b.start);
+                      if (procInst.length === 0)
+                        return null;
                       const first = procInst[0];
                       const anyType = procInst.find((x) => x.type && x.type.length > 0)?.type ?? undefined;
-                      const label = first ? `sid ${sid}${anyType ? " — " + anyType : ""}` : `sid ${sid}`;
+                      const label = `${anyType ? anyType + " - " : ""}${sid}`;
                       let baseHue = 200;
                       let baseSat = 50;
                       let baseLit = 48;
@@ -18047,46 +18539,73 @@ ${ev.raw ?? ev.message}` }),
                         baseLit = 50;
                       }
                       const hue = baseHue + hueVariation;
+                      const hasFailureProtocol = failureProtocols.some((frp) => frp.sid === Number(sid));
+                      const removeEvents = events.filter((e) => {
+                        return e.sid === Number(sid) && /RemoveNodeCommand/.test(e.message ?? "");
+                      });
+                      const hasNonGracefulRemoval = removeEvents.some((e) => !/Gracefully shutdown engine/i.test(e.message ?? ""));
+                      const hasAssert = removeEvents.some((e) => {
+                        const reasonMatch = e.message?.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/);
+                        return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+                      });
+                      const hasIssue = hasFailureProtocol || hasNonGracefulRemoval || hasAssert;
+                      const isCritical = hasAssert || hasFailureProtocol;
                       return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                         className: "stack-row layer",
-                        style: { cursor: "pointer", outline: focusedTimelineItem?.type === "sid" && focusedTimelineItem?.key === sid ? "2px solid rgba(43, 157, 244, 0.6)" : "none", outlineOffset: -2 },
+                        style: {
+                          cursor: "pointer",
+                          outline: focusedTimelineItem?.type === "sid" && focusedTimelineItem?.key === sid ? "2px solid rgba(43, 157, 244, 0.6)" : "none",
+                          outlineOffset: -2,
+                          borderLeft: hasIssue ? isCritical ? "3px solid #ff0000" : "3px solid #ff8844" : undefined,
+                          boxShadow: hasIssue ? isCritical ? "0 0 8px rgba(255, 0, 0, 0.3)" : "0 0 6px rgba(255, 136, 68, 0.2)" : undefined
+                        },
                         onClick: () => {
                           setFocusedTimelineItem({ type: "sid", key: sid, index: 0 });
                           setPanelFocus("timeline");
                           setSelectedSid(Number(sid));
                           setSelectedDb(null);
+                          setSelectedUnclassified(false);
                         },
                         children: [
                           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                             className: "stack-label",
-                            children: label
-                          }, undefined, false, undefined, this),
+                            children: [
+                              label,
+                              hasAssert && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                style: { marginLeft: 6, color: "#ff6666", fontSize: 11, fontWeight: 600 },
+                                title: "ASSERT detected",
+                                children: "⚠"
+                              }, undefined, false, undefined, this),
+                              hasFailureProtocol && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                style: { marginLeft: 6, color: "#ff4444", fontSize: 11, fontWeight: 600 },
+                                title: "Failure Protocol",
+                                children: "⚠"
+                              }, undefined, false, undefined, this)
+                            ]
+                          }, undefined, true, undefined, this),
                           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                             className: "stack-track",
                             children: [
-                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                                className: "selection-overlay",
-                                style: { left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%` }
-                              }, undefined, false, undefined, this),
                               procInst.map((inst, idx) => {
-                                const removeEvents = events.filter((e) => {
-                                  const msg = e.message ?? "";
-                                  const sidMatch = new RegExp(`\\bstartId=${sid}\\b`, "i").test(msg);
-                                  return sidMatch && /RemoveNodeCommand/.test(msg);
+                                const removeEvents2 = events.filter((e) => {
+                                  return e.sid === Number(sid) && /RemoveNodeCommand/.test(e.message ?? "");
                                 });
-                                const hasNonGracefulRemoval = removeEvents.some((e) => !/Gracefully shutdown engine/i.test(e.message ?? ""));
-                                const effectiveEnd = removeEvents.length > 0 ? inst.end : globalEnd;
-                                const left = (inst.start - globalStart) / (globalEnd - globalStart) * 100;
-                                const right = (effectiveEnd - globalStart) / (globalEnd - globalStart) * 100;
+                                const hasNonGracefulRemoval2 = removeEvents2.some((e) => !/Gracefully shutdown engine/i.test(e.message ?? ""));
+                                const effectiveEnd = removeEvents2.length > 0 ? inst.end : globalEnd;
+                                const instanceOverlaps = effectiveEnd >= gStart && inst.start <= gEnd;
+                                if (!instanceOverlaps)
+                                  return null;
+                                const left = Math.max(0, (inst.start - gStart) / (gEnd - gStart) * 100);
+                                const right = Math.min(100, (effectiveEnd - gStart) / (gEnd - gStart) * 100);
                                 const width = Math.max(0.2, right - left);
                                 const lit = baseLit + idx * 8 % 20 - 10;
                                 const style = { left: `${left}%`, width: `${width}%`, background: `hsl(${hue}deg ${baseSat}% ${lit}%)` };
-                                let tooltipContent = `sid=${inst.sid} ${inst.firstIso ?? ""} → ${removeEvents.length > 0 ? inst.lastIso ?? "" : "still running"}`;
-                                if (removeEvents.length > 0) {
+                                let tooltipContent = `sid=${inst.sid} ${inst.firstIso ?? ""} → ${removeEvents2.length > 0 ? inst.lastIso ?? "" : "still running"}`;
+                                if (removeEvents2.length > 0) {
                                   tooltipContent += `
 
 RemoveNodeCommand events:`;
-                                  removeEvents.forEach((e) => {
+                                  removeEvents2.forEach((e) => {
                                     tooltipContent += `
 ${e.iso ?? ""}: ${e.message ?? ""}`;
                                   });
@@ -18105,14 +18624,14 @@ ${e.iso ?? ""}: ${e.message ?? ""}`;
                                       onMouseEnter: () => setHoveredBar({ type: "process", id: barId, content: tooltipContent }),
                                       onMouseLeave: () => setHoveredBar(null)
                                     }, undefined, false, undefined, this),
-                                    hasNonGracefulRemoval && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                    hasNonGracefulRemoval2 && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                                       style: { position: "absolute", right: 0, top: "0", bottom: "0", width: "1.5px", background: "#ff4444", borderRadius: "0 2px 2px 0", zIndex: 5, pointerEvents: "none" }
                                     }, undefined, false, undefined, this)
                                   ]
                                 }, `${sid}-${inst.sid}-${idx}`, true, undefined, this);
                               }),
                               failureProtocols.filter((frp) => frp.sid === Number(sid)).map((frp, idx) => {
-                                const left = (frp.ts - globalStart) / (globalEnd - globalStart) * 100;
+                                const left = (frp.ts - gStart) / (gEnd - gStart) * 100;
                                 const tooltipContent = frp.raw.replace(/^(\S+)\s+/, `$1
 `);
                                 const frpId = `frp-${sid}-${idx}`;
@@ -18129,13 +18648,13 @@ ${e.iso ?? ""}: ${e.message ?? ""}`;
                                   const sidMatch = new RegExp(`\\bstartId=${sid}\\b`, "i").test(msg);
                                   const isRemoveNode = /RemoveNodeCommand/.test(msg);
                                   const reasonMatch = isRemoveNode ? msg.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
-                                  const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
-                                  return sidMatch && hasAssert;
+                                  const hasAssert2 = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+                                  return sidMatch && hasAssert2;
                                 }).sort((a, b) => a.ts - b.ts);
                                 const groupedEvents = [];
                                 const groupThreshold = 0.5;
                                 assertEvents.forEach((ev) => {
-                                  const left = (ev.ts - globalStart) / (globalEnd - globalStart) * 100;
+                                  const left = (ev.ts - gStart) / (gEnd - gStart) * 100;
                                   const lastGroup = groupedEvents[groupedEvents.length - 1];
                                   if (lastGroup && Math.abs(left - lastGroup.left) < groupThreshold) {
                                     lastGroup.events.push(ev);
@@ -18179,22 +18698,19 @@ ${ev.message ?? ev.raw}`).join(`
                     })
                   ]
                 }, `group-${addr}`, true, undefined, this);
-              }),
-              ";"
+              })
             ]
           }, undefined, true, undefined, this),
           hoveredBar && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
             style: {
-              position: "absolute",
-              positionAnchor: `--${hoveredBar.id}`,
-              top: "anchor(bottom)",
-              left: "anchor(center)",
-              translate: "-50% 8px",
-              background: "rgba(15, 30, 45, 0.98)",
-              border: "1px solid rgba(43, 157, 244, 0.4)",
+              position: "fixed",
+              left: Math.min(mousePos.x + 12, window.innerWidth - 620),
+              top: Math.min(mousePos.y + 12, window.innerHeight - 200),
+              background: "var(--popover-bg)",
+              border: "1px solid var(--popover-border)",
               borderRadius: 6,
               padding: "8px 12px",
-              color: "#e6eef6",
+              color: "var(--text-primary)",
               fontSize: 13,
               whiteSpace: "pre-wrap",
               zIndex: 1000,
@@ -18212,12 +18728,40 @@ ${ev.message ?? ev.raw}`).join(`
               }, undefined, false, undefined, this),
               /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                 className: "range-slider-track",
-                style: { flex: 1, position: "relative", height: 40 },
+                style: { flex: 1, position: "relative", height: 80 },
                 children: [
                   /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                    style: { position: "absolute", top: 12, left: 0, right: 0, height: 4, background: "#1b2b3a", borderRadius: 2 },
+                    style: { position: "absolute", top: 0, left: 0, right: 0, height: 60, background: "var(--bg-secondary)", borderRadius: 4, border: "1px solid var(--border-secondary)" },
+                    children: [
+                      Object.keys(dbStates || {}).map((dbName, dbIdx) => {
+                        const segments = dbStates[dbName] || [];
+                        return segments.map((seg, segIdx) => {
+                          const left = (seg.start - globalStart) / (globalEnd - globalStart) * 100;
+                          const width = (seg.end - seg.start) / (globalEnd - globalStart) * 100;
+                          const colors = { NOT_RUNNING: "#555", STARTING: "#ffdd99", RUNNING: "#90ee90", STOPPED: "#ff6666", FAILED: "#ff4444" };
+                          const color = colors[seg.state] || "#888";
+                          return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: { position: "absolute", left: `${left}%`, width: `${width}%`, top: dbIdx * 3, height: 2, background: color, opacity: 0.6 }
+                          }, `${dbName}-${segIdx}`, false, undefined, this);
+                        });
+                      }),
+                      Object.keys(allRowsBySid).map((sidKey, sidIdx) => {
+                        const instances2 = allRowsBySid[sidKey];
+                        return instances2.map((inst, instIdx) => {
+                          const left = (inst.start - globalStart) / (globalEnd - globalStart) * 100;
+                          const width = (inst.end - inst.start) / (globalEnd - globalStart) * 100;
+                          const typeColor = instanceType(inst) === "TE" ? "#6eb5ff" : instanceType(inst) === "SM" ? "#ffa500" : "#9966ff";
+                          return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: { position: "absolute", left: `${left}%`, width: `${width}%`, top: 20 + sidIdx % 35, height: 1, background: typeColor, opacity: 0.5 }
+                          }, `${sidKey}-${instIdx}`, false, undefined, this);
+                        });
+                      })
+                    ]
+                  }, undefined, true, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: { position: "absolute", top: 0, left: 0, right: 0, height: 60, pointerEvents: "none" },
                     children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                      style: { position: "absolute", left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%`, height: rangeBarHover ? "8px" : "100%", top: rangeBarHover ? "-2px" : 0, background: "rgba(46, 204, 113, 0.4)", borderRadius: 2, cursor: "grab", transition: "height 0.15s ease, top 0.15s ease" },
+                      style: { position: "absolute", left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, right: `${100 - (gEnd - globalStart) / (globalEnd - globalStart) * 100}%`, height: "100%", background: "rgba(46, 204, 113, 0.15)", border: "2px solid rgba(46, 204, 113, 0.6)", borderRadius: 4, pointerEvents: "all", cursor: "grab" },
                       onMouseEnter: () => setRangeBarHover(true),
                       onMouseLeave: () => setRangeBarHover(false),
                       onMouseDown: (e) => {
@@ -18229,21 +18773,21 @@ ${ev.message ?? ev.raw}`).join(`
                     }, undefined, false, undefined, this)
                   }, undefined, false, undefined, this),
                   /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                    style: { position: "absolute", left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, top: 8, width: 12, height: 12, background: "#fff", border: "2px solid var(--accent)", borderRadius: "50%", cursor: "ew-resize", zIndex: 2 },
+                    style: { position: "absolute", left: `${(gStart - globalStart) / (globalEnd - globalStart) * 100}%`, top: 22, width: 16, height: 16, background: "var(--range-handle-bg)", border: "3px solid var(--accent)", borderRadius: "50%", cursor: "ew-resize", zIndex: 3, transform: "translateX(-50%)" },
                     onMouseDown: (e) => {
                       e.preventDefault();
                       setDragging("start");
                     }
                   }, undefined, false, undefined, this),
                   /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                    style: { position: "absolute", left: `${(gEnd - globalStart) / (globalEnd - globalStart) * 100}%`, top: 8, width: 12, height: 12, background: "#fff", border: "2px solid var(--accent)", borderRadius: "50%", cursor: "ew-resize", zIndex: 2 },
+                    style: { position: "absolute", left: `${(gEnd - globalStart) / (globalEnd - globalStart) * 100}%`, top: 22, width: 16, height: 16, background: "var(--range-handle-bg)", border: "3px solid var(--accent)", borderRadius: "50%", cursor: "ew-resize", zIndex: 3, transform: "translateX(-50%)" },
                     onMouseDown: (e) => {
                       e.preventDefault();
                       setDragging("end");
                     }
                   }, undefined, false, undefined, this),
                   /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                    style: { position: "absolute", top: 24, left: 0, right: 0, fontSize: 11, color: "#7da3b8", textAlign: "center" },
+                    style: { position: "absolute", top: 62, left: 0, right: 0, fontSize: 11, color: "var(--text-hint)", textAlign: "center" },
                     children: [
                       new Date(gStart).toISOString(),
                       " → ",
@@ -18255,630 +18799,554 @@ ${ev.message ?? ev.raw}`).join(`
             ]
           }, undefined, true, undefined, this),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-            style: { display: "flex", gap: 12 },
-            children: [
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("table", {
-                className: "table",
-                style: { flex: 1 },
-                children: [
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("thead", {
-                    children: [
-                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
-                        children: [
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            onClick: () => toggleSort("sid"),
-                            style: { cursor: "pointer" },
-                            children: [
-                              "sid",
-                              sortKey === "sid" ? sortDir === "asc" ? " ▲" : " ▼" : ""
-                            ]
-                          }, undefined, true, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            onClick: () => toggleSort("type"),
-                            style: { cursor: "pointer" },
-                            children: [
-                              "Type",
-                              sortKey === "type" ? sortDir === "asc" ? " ▲" : " ▼" : ""
-                            ]
-                          }, undefined, true, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            onClick: () => toggleSort("address"),
-                            style: { cursor: "pointer" },
-                            children: [
-                              "Address",
-                              sortKey === "address" ? sortDir === "asc" ? " ▲" : " ▼" : ""
-                            ]
-                          }, undefined, true, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            onClick: () => toggleSort("start"),
-                            style: { cursor: "pointer" },
-                            children: [
-                              "Start",
-                              sortKey === "start" ? sortDir === "asc" ? " ▲" : " ▼" : ""
-                            ]
-                          }, undefined, true, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            onClick: () => toggleSort("end"),
-                            style: { cursor: "pointer" },
-                            children: [
-                              "End",
-                              sortKey === "end" ? sortDir === "asc" ? " ▲" : " ▼" : ""
-                            ]
-                          }, undefined, true, undefined, this)
-                        ]
-                      }, undefined, true, undefined, this),
-                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
-                        children: [
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
-                              value: filterSid,
-                              onChange: (e) => setFilterSid(e.target.value),
-                              placeholder: "sid",
-                              style: { width: 70 }
-                            }, undefined, false, undefined, this)
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("select", {
-                              value: filterType,
-                              onChange: (e) => setFilterType(e.target.value),
-                              children: [
-                                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                                  value: "ALL",
-                                  children: "All"
-                                }, undefined, false, undefined, this),
-                                typeOptions.map((t) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                                  value: t,
-                                  children: t
-                                }, t, false, undefined, this))
-                              ]
-                            }, undefined, true, undefined, this)
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            children: [
-                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
-                                list: "addrOptions",
-                                value: filterAddr,
-                                onChange: (e) => setFilterAddr(e.target.value),
-                                placeholder: "search address",
-                                style: { minWidth: 200 }
-                              }, undefined, false, undefined, this),
-                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("datalist", {
-                                id: "addrOptions",
-                                children: Array.from(new Set(instances.map((i) => i.address).filter(Boolean))).sort().map((a) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("option", {
-                                  value: a
-                                }, a, false, undefined, this))
-                              }, undefined, false, undefined, this)
-                            ]
-                          }, undefined, true, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("th", {
-                            colSpan: 2,
-                            children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
-                              onClick: () => {
-                                setFilterSid("");
-                                setFilterType("ALL");
-                                setFilterAddr("");
-                              },
-                              style: { background: "#0b2b34", color: "#9fb4c9", border: "none", padding: "6px 8px", borderRadius: 4, cursor: "pointer" },
-                              children: "Reset filters"
-                            }, undefined, false, undefined, this)
-                          }, undefined, false, undefined, this)
-                        ]
-                      }, undefined, true, undefined, this)
-                    ]
-                  }, undefined, true, undefined, this),
-                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tbody", {
-                    children: [
-                      unclassifiedEvents.length > 0 && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
-                        onClick: () => {
-                          setSelectedUnclassified(true);
-                          setSelectedSid(null);
-                          setSelectedDb(null);
-                          setPanelFocus("table");
-                          setFocusedEventIndex(0);
-                          setFocusedTimelineItem({ type: "unclassified", key: "unclassified", index: 0 });
-                        },
-                        style: { cursor: "pointer", background: selectedUnclassified ? "rgba(43, 157, 244, 0.1)" : undefined },
-                        children: [
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            style: { color: "#9fb4c9" },
-                            children: "—"
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            style: { color: "#9fb4c9" },
-                            children: "Unclassified"
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            colSpan: 3,
-                            style: { fontSize: 12, color: "#7da3b8" },
-                            children: [
-                              unclassifiedEvents.length,
-                              " events not associated with any process or database"
-                            ]
-                          }, undefined, true, undefined, this)
-                        ]
-                      }, "unclassified", true, undefined, this),
-                      Object.keys(dbStates || {}).map((db, dbIdx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
-                        onClick: () => {
-                          setSelectedDb(db);
-                          setSelectedSid(null);
-                          setSelectedUnclassified(false);
-                          setFocusedRowIndex(dbIdx);
-                          setPanelFocus("table");
-                          setFocusedEventIndex(0);
-                          setFocusedTimelineItem({ type: "db", key: db, index: 0 });
-                        },
-                        style: { cursor: "pointer", background: selectedDb === db ? "rgba(43, 157, 244, 0.1)" : undefined },
-                        children: [
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            style: { color: "#9fb4c9" },
-                            children: "—"
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            style: { color: "#9fb4c9" },
-                            children: "Database"
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            children: db
-                          }, undefined, false, undefined, this),
-                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                            colSpan: 2,
-                            style: { fontSize: 12, color: "#7da3b8" },
-                            children: "Click to view state transitions"
-                          }, undefined, false, undefined, this)
-                        ]
-                      }, `db-${db}`, true, undefined, this)),
-                      visibleSorted.map((i, idx) => {
-                        const rowIndex = Object.keys(dbStates || {}).length + idx;
-                        const hasFailureProtocol = failureProtocols.some((frp) => frp.sid === i.sid);
-                        const removeEvents = events.filter((e) => {
-                          const msg = e.message ?? "";
-                          const sidMatch = new RegExp(`\\bstartId=${i.sid}\\b`, "i").test(msg);
-                          return sidMatch && /RemoveNodeCommand/.test(msg);
-                        });
-                        const hasNonGracefulRemoval = removeEvents.some((e) => !/Gracefully shutdown engine/i.test(e.message ?? ""));
-                        const hasAssert = removeEvents.some((e) => {
-                          const reasonMatch = e.message?.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/);
-                          return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
-                        });
-                        const hasIssue = hasFailureProtocol || hasNonGracefulRemoval || hasAssert;
-                        const isCritical = hasAssert || hasFailureProtocol;
-                        const rowStyle = {
-                          cursor: "pointer",
-                          background: selectedSid === i.sid ? "rgba(43, 157, 244, 0.1)" : undefined,
-                          borderLeft: hasIssue ? isCritical ? "3px solid #ff0000" : "3px solid #ff8844" : undefined,
-                          boxShadow: hasIssue ? isCritical ? "0 0 8px rgba(255, 0, 0, 0.3)" : "0 0 6px rgba(255, 136, 68, 0.2)" : undefined
-                        };
-                        return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("tr", {
-                          onClick: () => {
-                            setSelectedSid(i.sid);
-                            setSelectedDb(null);
-                            setSelectedUnclassified(false);
-                            setFocusedRowIndex(rowIndex);
-                            setPanelFocus("table");
-                            setFocusedEventIndex(0);
-                            setFocusedTimelineItem({ type: "sid", key: String(i.sid), index: 0 });
-                          },
-                          style: rowStyle,
-                          children: [
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                              style: { color: "#bfe7ff" },
-                              children: [
-                                i.sid,
-                                hasAssert && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
-                                  style: { marginLeft: 6, color: "#ff6666", fontSize: 11, fontWeight: 600 },
-                                  title: "ASSERT detected",
-                                  children: "⚠"
-                                }, undefined, false, undefined, this),
-                                hasFailureProtocol && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
-                                  style: { marginLeft: 6, color: "#ff4444", fontSize: 11, fontWeight: 600 },
-                                  title: "Failure Protocol",
-                                  children: "⚠"
-                                }, undefined, false, undefined, this)
-                              ]
-                            }, undefined, true, undefined, this),
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                              children: instanceType(i)
-                            }, undefined, false, undefined, this),
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                              children: i.address ?? ""
-                            }, undefined, false, undefined, this),
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                              children: i.firstIso ?? new Date(i.start).toISOString()
-                            }, undefined, false, undefined, this),
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("td", {
-                              children: i.lastIso ?? new Date(i.end).toISOString()
-                            }, undefined, false, undefined, this)
-                          ]
-                        }, `row-${idx}`, true, undefined, this);
-                      })
-                    ]
-                  }, undefined, true, undefined, this)
-                ]
-              }, undefined, true, undefined, this),
-              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                style: { width: 420, background: "#05131a", border: "1px solid #12303a", borderRadius: 6, padding: 8 },
-                children: selectedSid === null && selectedDb === null && !selectedUnclassified ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                  style: { color: "#7da3b8" },
-                  children: "Click a row to see events"
-                }, undefined, false, undefined, this) : selectedUnclassified ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+            style: { marginTop: 16, background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", borderRadius: 6, padding: 8 },
+            children: selectedSid === null && selectedDb === null && !selectedUnclassified ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+              style: { color: "var(--text-hint)" },
+              children: "Click a row to see events"
+            }, undefined, false, undefined, this) : selectedUnclassified ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
                   children: [
                     /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                      style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+                      style: { fontWeight: 600 },
+                      children: "Logs - Unclassified"
+                    }, undefined, false, undefined, this),
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                      onClick: () => setSelectedUnclassified(false),
+                      style: { background: "var(--button-bg)", color: "var(--text-muted)", border: "none", padding: "6px 8px", borderRadius: 4, cursor: "pointer" },
+                      children: "Close"
+                    }, undefined, false, undefined, this)
+                  ]
+                }, undefined, true, undefined, this),
+                function() {
+                  if (unclassifiedEvents.length === 0) {
+                    return null;
+                  }
+                  const minTs = Math.min(...unclassifiedEvents.map((e) => e.ts));
+                  const maxTs = Math.max(...unclassifiedEvents.map((e) => e.ts));
+                  const timelineWidth = 380;
+                  return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: { marginBottom: 12, padding: "8px 0" },
+                    children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { position: "relative", height: 32, background: "var(--timeline-event-bg)", borderRadius: 4, padding: "0 10px" },
                       children: [
                         /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          style: { fontWeight: 600 },
-                          children: "Unclassified Events"
+                          style: { position: "absolute", left: 10, right: 10, top: "50%", height: 2, background: "rgba(159, 180, 201, 0.3)", transform: "translateY(-50%)" }
                         }, undefined, false, undefined, this),
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
-                          onClick: () => setSelectedUnclassified(false),
-                          style: { background: "#0b2b34", color: "#9fb4c9", border: "none", padding: "6px 8px", borderRadius: 4, cursor: "pointer" },
-                          children: "Close"
-                        }, undefined, false, undefined, this)
+                        unclassifiedEvents.map((ev, idx) => {
+                          const pos = maxTs > minTs ? (ev.ts - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
+                          const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+                          return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            title: ev.iso,
+                            style: {
+                              position: "absolute",
+                              left: 10 + pos,
+                              top: "50%",
+                              width: isSelected ? 12 : 8,
+                              height: isSelected ? 12 : 8,
+                              background: isSelected ? "#b380ff" : "#9966ff",
+                              transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
+                              cursor: "pointer",
+                              border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
+                              zIndex: isSelected ? 10 : 1,
+                              transition: "all 0.2s ease"
+                            },
+                            onClick: () => {
+                              setFocusedEventIndex(idx);
+                              setPanelFocus("events");
+                              setTimeout(() => {
+                                const elem = document.querySelectorAll(".event-item")[idx];
+                                if (elem)
+                                  elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                              }, 50);
+                            }
+                          }, idx, false, undefined, this);
+                        })
+                      ]
+                    }, undefined, true, undefined, this)
+                  }, undefined, false, undefined, this);
+                }(),
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { maxHeight: 480, overflow: "auto" },
+                  children: unclassifiedEvents.map((ev, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+                    onClick: () => {
+                      setFocusedEventIndex(idx);
+                      setPanelFocus("events");
+                    },
+                    style: {
+                      padding: "6px 8px",
+                      borderBottom: "1px solid rgba(255,255,255,0.02)",
+                      cursor: "pointer",
+                      background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : undefined
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                        style: { fontSize: 12, color: "var(--text-muted)" },
+                        children: ev.iso
+                      }, undefined, false, undefined, this),
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                        style: { fontSize: 13, color: "var(--text-primary)", whiteSpace: "pre-wrap" },
+                        children: ev.raw ?? ev.message
+                      }, undefined, false, undefined, this)
+                    ]
+                  }, idx, true, undefined, this))
+                }, undefined, false, undefined, this)
+              ]
+            }, undefined, true, undefined, this) : selectedDb !== null ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+                  children: [
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { fontWeight: 600 },
+                      children: [
+                        "Logs - Database ",
+                        selectedDb
                       ]
                     }, undefined, true, undefined, this),
-                    function() {
-                      if (unclassifiedEvents.length === 0) {
-                        return null;
-                      }
-                      const minTs = Math.min(...unclassifiedEvents.map((e) => e.ts));
-                      const maxTs = Math.max(...unclassifiedEvents.map((e) => e.ts));
-                      const timelineWidth = 380;
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                      onClick: () => setSelectedDb(null),
+                      style: { background: "var(--button-bg)", color: "var(--text-muted)", border: "none", padding: "6px 8px", borderRadius: 4, cursor: "pointer" },
+                      children: "Close"
+                    }, undefined, false, undefined, this)
+                  ]
+                }, undefined, true, undefined, this),
+                function() {
+                  const dbStateEvents = dbStates[selectedDb] || [];
+                  const dbSpecificEvents = databaseEvents.filter((e) => {
+                    const msg = e.message ?? "";
+                    const raw = e.raw ?? "";
+                    return msg.includes(selectedDb) || raw.includes(selectedDb);
+                  });
+                  const allDbEvents = [
+                    ...dbStateEvents,
+                    ...dbSpecificEvents.map((e) => {
+                      const fullLog = e.raw ?? e.message;
+                      const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(fullLog);
+                      const state = isUpdateDbCmd ? "UpdateDatabaseOptionsCommand" : "Database Event";
+                      return {
+                        start: e.ts,
+                        iso: e.iso,
+                        state,
+                        message: fullLog,
+                        isUpdate: isUpdateDbCmd
+                      };
+                    })
+                  ];
+                  allDbEvents.sort((a, b) => a.start - b.start);
+                  if (allDbEvents.length === 0) {
+                    return null;
+                  }
+                  const minTs = Math.min(...allDbEvents.map((e) => e.start));
+                  const maxTs = Math.max(...allDbEvents.map((e) => e.start));
+                  const timelineWidth = 380;
+                  return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: { marginBottom: 12, padding: "8px 0" },
+                    children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { position: "relative", height: 32, background: "var(--timeline-event-bg)", borderRadius: 4, padding: "0 10px" },
+                      children: [
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: { position: "absolute", left: 10, right: 10, top: "50%", height: 2, background: "rgba(159, 180, 201, 0.3)", transform: "translateY(-50%)" }
+                        }, undefined, false, undefined, this),
+                        allDbEvents.map((seg, idx) => {
+                          const pos = maxTs > minTs ? (seg.start - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
+                          const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+                          return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            title: seg.iso,
+                            style: {
+                              position: "absolute",
+                              left: 10 + pos,
+                              top: "50%",
+                              width: isSelected ? 12 : 8,
+                              height: isSelected ? 12 : 8,
+                              background: isSelected ? "#43bdff" : "#2b9df4",
+                              transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
+                              cursor: "pointer",
+                              border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
+                              zIndex: isSelected ? 10 : 1,
+                              transition: "all 0.2s ease"
+                            },
+                            onClick: () => {
+                              setFocusedEventIndex(idx);
+                              setPanelFocus("events");
+                              setTimeout(() => {
+                                const elem = document.querySelectorAll(".event-item")[idx];
+                                if (elem)
+                                  elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                              }, 50);
+                            }
+                          }, idx, false, undefined, this);
+                        })
+                      ]
+                    }, undefined, true, undefined, this)
+                  }, undefined, false, undefined, this);
+                }(),
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { maxHeight: 480, overflow: "auto" },
+                  children: function() {
+                    const dbStateEvents = dbStates[selectedDb] || [];
+                    const dbSpecificEvents = databaseEvents.filter((e) => {
+                      const msg = e.message ?? "";
+                      const raw = e.raw ?? "";
+                      return msg.includes(selectedDb) || raw.includes(selectedDb);
+                    });
+                    const allDbEvents = [
+                      ...dbStateEvents.map((seg) => {
+                        const matchingEvent = databaseEvents.find((e) => e.iso === seg.iso && e.message === seg.message);
+                        return {
+                          ...seg,
+                          dbDiff: matchingEvent ? matchingEvent.dbDiff : undefined
+                        };
+                      }),
+                      ...dbSpecificEvents.map((e) => {
+                        const fullLog = e.raw ?? e.message;
+                        const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(fullLog);
+                        const state = isUpdateDbCmd ? "UpdateDatabaseOptionsCommand" : "Database Event";
+                        return {
+                          start: e.ts,
+                          iso: e.iso,
+                          state,
+                          message: fullLog,
+                          isUpdate: isUpdateDbCmd,
+                          dbDiff: e.dbDiff
+                        };
+                      })
+                    ];
+                    allDbEvents.sort((a, b) => a.start - b.start);
+                    return allDbEvents.map((seg, idx) => {
+                      const isDbUpdate = /Updated database from DatabaseInfo/.test(seg.message);
                       return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                        style: { marginBottom: 12, padding: "8px 0" },
-                        children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          style: { position: "relative", height: 32, background: "#0a1e28", borderRadius: 4, padding: "0 10px" },
-                          children: [
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { position: "absolute", left: 10, right: 10, top: "50%", height: 2, background: "rgba(159, 180, 201, 0.3)", transform: "translateY(-50%)" }
-                            }, undefined, false, undefined, this),
-                            unclassifiedEvents.map((ev, idx) => {
-                              const pos = maxTs > minTs ? (ev.ts - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
-                              const isSelected = panelFocus === "events" && focusedEventIndex === idx;
-                              return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                                title: ev.iso,
-                                style: {
-                                  position: "absolute",
-                                  left: 10 + pos,
-                                  top: "50%",
-                                  width: isSelected ? 12 : 8,
-                                  height: isSelected ? 12 : 8,
-                                  background: isSelected ? "#b380ff" : "#9966ff",
-                                  transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
-                                  cursor: "pointer",
-                                  border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
-                                  zIndex: isSelected ? 10 : 1,
-                                  transition: "all 0.2s ease"
-                                },
-                                onClick: () => {
-                                  setFocusedEventIndex(idx);
-                                  setPanelFocus("events");
-                                  setTimeout(() => {
-                                    const elem = document.querySelectorAll(".event-item")[idx];
-                                    if (elem)
-                                      elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
-                                  }, 50);
-                                }
-                              }, idx, false, undefined, this);
-                            })
-                          ]
-                        }, undefined, true, undefined, this)
-                      }, undefined, false, undefined, this);
-                    }(),
-                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                      style: { maxHeight: 480, overflow: "auto" },
-                      children: unclassifiedEvents.map((ev, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
                         className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
                         onClick: () => {
                           setFocusedEventIndex(idx);
                           setPanelFocus("events");
                         },
-                        style: {
-                          padding: "6px 8px",
-                          borderBottom: "1px solid rgba(255,255,255,0.02)",
-                          cursor: "pointer",
-                          background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : undefined
-                        },
+                        style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)", cursor: "pointer", background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : seg.isUpdate ? "rgba(280, 60%, 60%, 0.05)" : undefined },
                         children: [
                           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                            style: { fontSize: 12, color: "#9fb4c9" },
-                            children: ev.iso
+                            style: { fontSize: 12, color: "var(--text-muted)" },
+                            children: seg.iso
                           }, undefined, false, undefined, this),
                           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                            style: { fontSize: 13, color: "#e6eef6", whiteSpace: "pre-wrap" },
-                            children: (ev.raw ?? ev.message).replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, "")
-                          }, undefined, false, undefined, this)
-                        ]
-                      }, idx, true, undefined, this))
-                    }, undefined, false, undefined, this)
-                  ]
-                }, undefined, true, undefined, this) : selectedDb !== null ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                  children: [
-                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                      style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-                      children: [
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          style: { fontWeight: 600 },
-                          children: [
-                            "Database state transitions: ",
-                            selectedDb
-                          ]
-                        }, undefined, true, undefined, this),
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
-                          onClick: () => setSelectedDb(null),
-                          style: { background: "#0b2b34", color: "#9fb4c9", border: "none", padding: "6px 8px", borderRadius: 4, cursor: "pointer" },
-                          children: "Close"
-                        }, undefined, false, undefined, this)
-                      ]
-                    }, undefined, true, undefined, this),
-                    function() {
-                      const dbStateEvents = dbStates[selectedDb] || [];
-                      const dbSpecificEvents = databaseEvents.filter((e) => {
-                        const msg = e.message ?? "";
-                        const raw = e.raw ?? "";
-                        return msg.includes(selectedDb) || raw.includes(selectedDb);
-                      });
-                      const allDbEvents = [
-                        ...dbStateEvents,
-                        ...dbSpecificEvents.map((e) => {
-                          const fullLog = e.raw ?? e.message;
-                          const messageWithoutIso = fullLog.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, "");
-                          const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(fullLog);
-                          const state = isUpdateDbCmd ? "UpdateDatabaseOptionsCommand" : "Database Event";
-                          return {
-                            start: e.ts,
-                            iso: e.iso,
-                            state,
-                            message: messageWithoutIso,
-                            isUpdate: isUpdateDbCmd
-                          };
-                        })
-                      ];
-                      allDbEvents.sort((a, b) => a.start - b.start);
-                      if (allDbEvents.length === 0) {
-                        return null;
-                      }
-                      const minTs = Math.min(...allDbEvents.map((e) => e.start));
-                      const maxTs = Math.max(...allDbEvents.map((e) => e.start));
-                      const timelineWidth = 380;
-                      return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                        style: { marginBottom: 12, padding: "8px 0" },
-                        children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          style: { position: "relative", height: 32, background: "#0a1e28", borderRadius: 4, padding: "0 10px" },
-                          children: [
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { position: "absolute", left: 10, right: 10, top: "50%", height: 2, background: "rgba(159, 180, 201, 0.3)", transform: "translateY(-50%)" }
-                            }, undefined, false, undefined, this),
-                            allDbEvents.map((seg, idx) => {
-                              const pos = maxTs > minTs ? (seg.start - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
-                              const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+                            style: { fontSize: 13, color: seg.isUpdate ? "#c9a6ff" : "var(--text-primary)", fontWeight: 600 },
+                            children: seg.state
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: { fontSize: 12, color: "var(--text-secondary)", whiteSpace: "pre-wrap", marginTop: 2 },
+                            children: seg.message
+                          }, undefined, false, undefined, this),
+                          isDbUpdate && seg.dbDiff && (() => {
+                            const changedKeys = Object.keys({ ...seg.dbDiff.from, ...seg.dbDiff.to }).filter((key) => {
+                              return seg.dbDiff.from[key] !== seg.dbDiff.to[key];
+                            });
+                            if (changedKeys.length === 0) {
                               return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                                title: seg.iso,
-                                style: {
-                                  position: "absolute",
-                                  left: 10 + pos,
-                                  top: "50%",
-                                  width: isSelected ? 12 : 8,
-                                  height: isSelected ? 12 : 8,
-                                  background: isSelected ? "#43bdff" : "#2b9df4",
-                                  transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
-                                  cursor: "pointer",
-                                  border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
-                                  zIndex: isSelected ? 10 : 1,
-                                  transition: "all 0.2s ease"
-                                },
-                                onClick: () => {
-                                  setFocusedEventIndex(idx);
-                                  setPanelFocus("events");
-                                  setTimeout(() => {
-                                    const elem = document.querySelectorAll(".event-item")[idx];
-                                    if (elem)
-                                      elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
-                                  }, 50);
-                                }
-                              }, idx, false, undefined, this);
-                            })
-                          ]
-                        }, undefined, true, undefined, this)
-                      }, undefined, false, undefined, this);
-                    }(),
-                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                      style: { maxHeight: 480, overflow: "auto" },
-                      children: function() {
-                        const dbStateEvents = dbStates[selectedDb] || [];
-                        const dbSpecificEvents = databaseEvents.filter((e) => {
-                          const msg = e.message ?? "";
-                          const raw = e.raw ?? "";
-                          return msg.includes(selectedDb) || raw.includes(selectedDb);
-                        });
-                        const allDbEvents = [
-                          ...dbStateEvents,
-                          ...dbSpecificEvents.map((e) => {
-                            const fullLog = e.raw ?? e.message;
-                            const messageWithoutIso = fullLog.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, "");
-                            const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(fullLog);
-                            const state = isUpdateDbCmd ? "UpdateDatabaseOptionsCommand" : "Database Event";
-                            return {
-                              start: e.ts,
-                              iso: e.iso,
-                              state,
-                              message: messageWithoutIso,
-                              isUpdate: isUpdateDbCmd
-                            };
-                          })
-                        ];
-                        allDbEvents.sort((a, b) => a.start - b.start);
-                        return allDbEvents.map((seg, idx) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
-                          onClick: () => {
-                            setFocusedEventIndex(idx);
-                            setPanelFocus("events");
-                          },
-                          style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)", cursor: "pointer", background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : seg.isUpdate ? "rgba(280, 60%, 60%, 0.05)" : undefined },
-                          children: [
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { fontSize: 12, color: "#9fb4c9" },
-                              children: seg.iso
-                            }, undefined, false, undefined, this),
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { fontSize: 13, color: seg.isUpdate ? "#c9a6ff" : "#e6eef6", fontWeight: 600 },
-                              children: seg.state
-                            }, undefined, false, undefined, this),
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { fontSize: 12, color: "#cfe6f7", whiteSpace: "pre-wrap", marginTop: 2 },
-                              children: seg.message
-                            }, undefined, false, undefined, this)
-                          ]
-                        }, idx, true, undefined, this));
-                      }()
-                    }, undefined, false, undefined, this)
-                  ]
-                }, undefined, true, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                  children: [
-                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                      style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-                      children: [
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          style: { fontWeight: 600 },
-                          children: [
-                            "Events for sid ",
-                            selectedSid
-                          ]
-                        }, undefined, true, undefined, this),
-                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
-                          onClick: () => setSelectedSid(null),
-                          style: { background: "#0b2b34", color: "#9fb4c9", border: "none", padding: "6px 8px", borderRadius: 4, cursor: "pointer" },
-                          children: "Close"
-                        }, undefined, false, undefined, this)
-                      ]
-                    }, undefined, true, undefined, this),
-                    function() {
-                      const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, "i");
-                      const instsForSid = rowsBySid[String(selectedSid)] || [];
-                      const related = events.filter((e) => {
-                        const raw = e.raw ?? "";
-                        const msg = e.message ?? "";
-                        return sidRe.test(raw) || sidRe.test(msg);
-                      });
-                      related.sort((a, b) => a.ts - b.ts);
-                      const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
-                      const allEvents = [...related.map((ev) => ({ type: "event", ts: ev.ts, iso: ev.iso, message: ev.message })), ...frpForSid.map((frp) => ({ type: "frp", ts: frp.ts, iso: frp.iso, message: frp.raw }))];
-                      allEvents.sort((a, b) => a.ts - b.ts);
-                      if (allEvents.length === 0) {
-                        return null;
-                      }
-                      const minTs = Math.min(...allEvents.map((e) => e.ts));
-                      const maxTs = Math.max(...allEvents.map((e) => e.ts));
-                      const timelineWidth = 380;
-                      return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                        style: { marginBottom: 12, padding: "8px 0" },
-                        children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                          style: { position: "relative", height: 32, background: "#0a1e28", borderRadius: 4, padding: "0 10px" },
-                          children: [
-                            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { position: "absolute", left: 10, right: 10, top: "50%", height: 2, background: "rgba(159, 180, 201, 0.3)", transform: "translateY(-50%)" }
-                            }, undefined, false, undefined, this),
-                            allEvents.map((ev, idx) => {
-                              const pos = maxTs > minTs ? (ev.ts - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
-                              const isSelected = panelFocus === "events" && focusedEventIndex === idx;
-                              return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                                title: ev.iso,
-                                style: {
-                                  position: "absolute",
-                                  left: 10 + pos,
-                                  top: "50%",
-                                  width: isSelected ? 12 : 8,
-                                  height: isSelected ? 12 : 8,
-                                  background: isSelected ? ev.type === "frp" ? "#ff7070" : "#43bdff" : ev.type === "frp" ? "#ff5050" : "#2b9df4",
-                                  transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
-                                  cursor: "pointer",
-                                  border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
-                                  zIndex: isSelected ? 10 : 1,
-                                  transition: "all 0.2s ease"
-                                },
-                                onClick: () => {
-                                  setFocusedEventIndex(idx);
-                                  setPanelFocus("events");
-                                  setTimeout(() => {
-                                    const elem = document.querySelectorAll(".event-item")[idx];
-                                    if (elem)
-                                      elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
-                                  }, 50);
-                                }
-                              }, idx, false, undefined, this);
-                            })
-                          ]
-                        }, undefined, true, undefined, this)
-                      }, undefined, false, undefined, this);
-                    }(),
-                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                      style: { maxHeight: 480, overflow: "auto" },
-                      children: function() {
-                        const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, "i");
-                        const instsForSid = rowsBySid[String(selectedSid)] || [];
-                        const adminProcs = Array.from(new Set(instsForSid.map((i) => i.process)));
-                        const intervals = instsForSid.map((i) => ({ start: i.start, end: i.end }));
-                        const related = events.filter((e) => {
-                          const raw = e.raw ?? "";
-                          const msg = e.message ?? "";
-                          return sidRe.test(raw) || sidRe.test(msg);
-                        });
-                        related.sort((a, b) => a.ts - b.ts);
-                        const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
-                        const allEvents = [...related.map((ev) => ({ type: "event", ts: ev.ts, iso: ev.iso, message: ev.message, fileSource: ev.fileSource })), ...frpForSid.map((frp) => ({ type: "frp", ts: frp.ts, iso: frp.iso, message: frp.raw.replace(/^\S+\s+/, ""), fileSource: undefined }))];
-                        allEvents.sort((a, b) => a.ts - b.ts);
-                        let lastFileSource = undefined;
-                        const elements = [];
-                        allEvents.forEach((ev, idx) => {
-                          if (loadedServer && ev.fileSource && ev.fileSource !== lastFileSource) {
-                            elements.push(/* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                              style: { padding: "8px", background: "rgba(43, 157, 244, 0.08)", borderTop: "2px solid rgba(43, 157, 244, 0.3)", borderBottom: "2px solid rgba(43, 157, 244, 0.3)", margin: "4px 0", fontSize: 12, color: "#7da3b8", fontWeight: 600, textAlign: "center" },
+                                style: { marginTop: 6, background: "rgba(100, 100, 100, 0.15)", padding: "6px 8px", borderRadius: 4, borderLeft: "3px solid rgba(150, 150, 150, 0.4)" },
+                                children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                  style: { fontSize: 11, color: "var(--text-hint)", fontStyle: "italic" },
+                                  children: "No changes detected in database fields"
+                                }, undefined, false, undefined, this)
+                              }, undefined, false, undefined, this);
+                            }
+                            return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                              style: { marginTop: 6, background: "rgba(43, 157, 244, 0.08)", padding: "6px 8px", borderRadius: 4, borderLeft: "3px solid rgba(43, 157, 244, 0.4)" },
                               children: [
-                                "\uD83D\uDCC4 ",
-                                ev.fileSource
+                                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                  style: { fontSize: 11, fontWeight: 600, color: "var(--text-hint)", marginBottom: 4 },
+                                  children: "CHANGES:"
+                                }, undefined, false, undefined, this),
+                                Object.keys({ ...seg.dbDiff.from, ...seg.dbDiff.to }).map((key) => {
+                                  const fromVal = seg.dbDiff.from[key];
+                                  const toVal = seg.dbDiff.to[key];
+                                  const changed = fromVal !== toVal;
+                                  if (!changed)
+                                    return null;
+                                  return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                    style: { marginLeft: 8, fontSize: 11, marginTop: 2 },
+                                    children: [
+                                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                        style: { color: "var(--text-hint)" },
+                                        children: [
+                                          key,
+                                          "="
+                                        ]
+                                      }, undefined, true, undefined, this),
+                                      fromVal && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                        style: { background: "rgba(255, 80, 80, 0.2)", color: "#ffb3b3", padding: "1px 3px", borderRadius: 2, textDecoration: "line-through" },
+                                        children: fromVal
+                                      }, undefined, false, undefined, this),
+                                      fromVal && toVal && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                        style: { color: "var(--text-hint)", margin: "0 4px" },
+                                        children: "→"
+                                      }, undefined, false, undefined, this),
+                                      toVal && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                        style: { background: "rgba(80, 255, 120, 0.2)", color: "#90ee90", padding: "1px 3px", borderRadius: 2 },
+                                        children: toVal
+                                      }, undefined, false, undefined, this)
+                                    ]
+                                  }, key, true, undefined, this);
+                                })
                               ]
-                            }, `file-sep-${idx}`, true, undefined, this));
-                            lastFileSource = ev.fileSource;
-                          }
-                          const isRemoveNode = /RemoveNodeCommand/.test(ev.message);
-                          const reasonMatch = isRemoveNode ? ev.message.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
-                          const isGraceful = reasonMatch && /Gracefully shutdown engine/i.test(reasonMatch[0]);
-                          const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
-                          elements.push(/* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                            className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+                            }, undefined, true, undefined, this);
+                          })()
+                        ]
+                      }, idx, true, undefined, this);
+                    });
+                  }()
+                }, undefined, false, undefined, this)
+              ]
+            }, undefined, true, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+                  children: [
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { fontWeight: 600 },
+                      children: [
+                        "Logs - sid ",
+                        selectedSid
+                      ]
+                    }, undefined, true, undefined, this),
+                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                      onClick: () => setSelectedSid(null),
+                      style: { background: "var(--button-bg)", color: "var(--text-muted)", border: "none", padding: "6px 8px", borderRadius: 4, cursor: "pointer" },
+                      children: "Close"
+                    }, undefined, false, undefined, this)
+                  ]
+                }, undefined, true, undefined, this),
+                function() {
+                  const instsForSid = rowsBySid[String(selectedSid)] || [];
+                  const related = events.filter((e) => {
+                    if (e.sid === selectedSid)
+                      return true;
+                    if (e.sid === null && instsForSid.length > 0) {
+                      return instsForSid.some((inst) => e.ts >= inst.start && e.ts <= inst.end);
+                    }
+                    return false;
+                  });
+                  related.sort((a, b) => a.ts - b.ts);
+                  const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
+                  const allEvents = [...related.map((ev) => ({ type: "event", ts: ev.ts, iso: ev.iso, message: ev.message })), ...frpForSid.map((frp) => ({ type: "frp", ts: frp.ts, iso: frp.iso, message: frp.raw }))];
+                  allEvents.sort((a, b) => a.ts - b.ts);
+                  if (allEvents.length === 0) {
+                    return null;
+                  }
+                  const minTs = Math.min(...allEvents.map((e) => e.ts));
+                  const maxTs = Math.max(...allEvents.map((e) => e.ts));
+                  const timelineWidth = 380;
+                  return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                    style: { marginBottom: 12, padding: "8px 0" },
+                    children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                      style: { position: "relative", height: 32, background: "var(--timeline-event-bg)", borderRadius: 4, padding: "0 10px" },
+                      children: [
+                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: { position: "absolute", left: 10, right: 10, top: "50%", height: 2, background: "rgba(159, 180, 201, 0.3)", transform: "translateY(-50%)" }
+                        }, undefined, false, undefined, this),
+                        allEvents.map((ev, idx) => {
+                          const pos = maxTs > minTs ? (ev.ts - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
+                          const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+                          return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            title: ev.iso,
+                            style: {
+                              position: "absolute",
+                              left: 10 + pos,
+                              top: "50%",
+                              width: isSelected ? 12 : 8,
+                              height: isSelected ? 12 : 8,
+                              background: isSelected ? ev.type === "frp" ? "#ff7070" : "#43bdff" : ev.type === "frp" ? "#ff5050" : "#2b9df4",
+                              transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
+                              cursor: "pointer",
+                              border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
+                              zIndex: isSelected ? 10 : 1,
+                              transition: "all 0.2s ease"
+                            },
                             onClick: () => {
                               setFocusedEventIndex(idx);
                               setPanelFocus("events");
-                            },
-                            style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)", cursor: "pointer", background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : ev.type === "frp" ? "rgba(255, 80, 80, 0.05)" : undefined },
+                              setTimeout(() => {
+                                const elem = document.querySelectorAll(".event-item")[idx];
+                                if (elem)
+                                  elem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                              }, 50);
+                            }
+                          }, idx, false, undefined, this);
+                        })
+                      ]
+                    }, undefined, true, undefined, this)
+                  }, undefined, false, undefined, this);
+                }(),
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                  style: { maxHeight: 480, overflow: "auto" },
+                  children: function() {
+                    const instsForSid = rowsBySid[String(selectedSid)] || [];
+                    const adminProcs = Array.from(new Set(instsForSid.map((i) => i.process)));
+                    const intervals = instsForSid.map((i) => ({ start: i.start, end: i.end }));
+                    const related = events.filter((e) => {
+                      if (e.sid === selectedSid)
+                        return true;
+                      if (e.sid === null && instsForSid.length > 0) {
+                        const msg = e.message ?? "";
+                        const raw = e.raw ?? "";
+                        const isDatabaseEvent = /\bdbName[:=]/.test(msg) || /\bdbName[:=]/.test(raw) || /Database incarnation change/.test(msg) || /Database incarnation change/.test(raw) || /Updated database from DatabaseInfo/.test(msg) || /Updated database from DatabaseInfo/.test(raw);
+                        if (isDatabaseEvent)
+                          return false;
+                        return instsForSid.some((inst) => e.ts >= inst.start && e.ts <= inst.end);
+                      }
+                      return false;
+                    });
+                    related.sort((a, b) => a.ts - b.ts);
+                    const frpForSid = failureProtocols.filter((frp) => frp.sid === selectedSid);
+                    const allEvents = [...related.map((ev) => ({ type: "event", ts: ev.ts, iso: ev.iso, message: ev.message, raw: ev.raw, fileSource: ev.fileSource, dbDiff: ev.dbDiff })), ...frpForSid.map((frp) => ({ type: "frp", ts: frp.ts, iso: frp.iso, message: frp.raw, raw: frp.raw, fileSource: undefined, dbDiff: undefined }))];
+                    allEvents.sort((a, b) => a.ts - b.ts);
+                    let lastFileSource = undefined;
+                    const elements = [];
+                    allEvents.forEach((ev, idx) => {
+                      if (loadedServer && ev.fileSource && ev.fileSource !== lastFileSource) {
+                        elements.push(/* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                          style: { padding: "8px", background: "rgba(43, 157, 244, 0.08)", borderTop: "2px solid rgba(43, 157, 244, 0.3)", borderBottom: "2px solid rgba(43, 157, 244, 0.3)", margin: "4px 0", fontSize: 12, color: "var(--text-hint)", fontWeight: 600, textAlign: "center" },
+                          children: [
+                            "\uD83D\uDCC4 ",
+                            ev.fileSource
+                          ]
+                        }, `file-sep-${idx}`, true, undefined, this));
+                        lastFileSource = ev.fileSource;
+                      }
+                      const rawLog = ev.raw || ev.message;
+                      const logMatch = rawLog.match(/^(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+(\S+)\s+(.*)$/);
+                      let logLevel = "";
+                      let threadInfo = "";
+                      let loggerName = "";
+                      let logMessage = ev.message;
+                      if (logMatch) {
+                        logLevel = logMatch[2];
+                        threadInfo = logMatch[3];
+                        loggerName = logMatch[4];
+                        logMessage = logMatch[5];
+                      }
+                      const isRemoveNode = /RemoveNodeCommand/.test(logMessage);
+                      const reasonMatch = isRemoveNode ? logMessage.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
+                      const isGraceful = reasonMatch && /Gracefully shutdown engine/i.test(reasonMatch[0]);
+                      const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+                      const isDbUpdate = /Updated database from DatabaseInfo/.test(logMessage);
+                      const dbDiff = ev.dbDiff;
+                      if (isDbUpdate && logMessage.includes("ENOVIA")) {
+                        console.log("Frontend dbDiff for ENOVIA:", dbDiff);
+                      }
+                      elements.push(/* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                        className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+                        onClick: () => {
+                          setFocusedEventIndex(idx);
+                          setPanelFocus("events");
+                        },
+                        style: { padding: "6px 8px", borderBottom: "1px solid rgba(255,255,255,0.02)", cursor: "pointer", background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : ev.type === "frp" ? "rgba(255, 80, 80, 0.05)" : undefined },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: { fontSize: 12, color: "var(--text-muted)" },
+                            children: ev.iso
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                            style: { fontSize: 13, color: ev.type === "frp" ? "#ffb3b3" : "var(--text-primary)", whiteSpace: "pre-wrap" },
                             children: [
-                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                                style: { fontSize: 12, color: "#9fb4c9" },
-                                children: ev.iso
+                              logLevel && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                style: { color: logLevel === "ERROR" ? "#ff6666" : logLevel === "WARN" ? "#ffdd99" : "var(--text-hint)", fontWeight: 600, marginRight: 6 },
+                                children: logLevel
                               }, undefined, false, undefined, this),
-                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-                                style: { fontSize: 13, color: ev.type === "frp" ? "#ffb3b3" : "#e6eef6", whiteSpace: "pre-wrap" },
-                                children: isRemoveNode && reasonMatch ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV(jsx_dev_runtime.Fragment, {
-                                  children: [
-                                    ev.message.substring(0, reasonMatch.index),
-                                    /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
-                                      style: { background: hasAssert ? "rgba(255, 0, 0, 0.3)" : isGraceful ? "rgba(255, 200, 100, 0.2)" : "rgba(255, 80, 80, 0.2)", color: hasAssert ? "#ff6666" : isGraceful ? "#ffdd99" : "#ffb3b3", padding: "2px 4px", borderRadius: 3, fontWeight: 600, boxShadow: hasAssert ? "0 0 4px rgba(255, 0, 0, 0.4)" : "none" },
-                                      children: reasonMatch[0]
-                                    }, undefined, false, undefined, this),
-                                    ev.message.substring(reasonMatch.index + reasonMatch[0].length)
-                                  ]
-                                }, undefined, true, undefined, this) : ev.message
-                              }, undefined, false, undefined, this)
+                              threadInfo && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                style: { color: "var(--text-hint)", fontSize: 12, marginRight: 6 },
+                                children: [
+                                  "[",
+                                  threadInfo,
+                                  "]"
+                                ]
+                              }, undefined, true, undefined, this),
+                              loggerName && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                style: { color: "var(--text-hint)", marginRight: 6 },
+                                children: loggerName
+                              }, undefined, false, undefined, this),
+                              isDbUpdate && dbDiff ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                children: [
+                                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                    style: { marginBottom: 6 },
+                                    children: logMessage
+                                  }, undefined, false, undefined, this),
+                                  (() => {
+                                    const changedKeys = Object.keys({ ...dbDiff.from, ...dbDiff.to }).filter((key) => {
+                                      return dbDiff.from[key] !== dbDiff.to[key];
+                                    });
+                                    if (changedKeys.length === 0) {
+                                      return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                        style: { background: "rgba(100, 100, 100, 0.15)", padding: "6px 8px", borderRadius: 4, borderLeft: "3px solid rgba(150, 150, 150, 0.4)" },
+                                        children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                          style: { fontSize: 11, color: "var(--text-hint)", fontStyle: "italic" },
+                                          children: "No changes detected in database fields"
+                                        }, undefined, false, undefined, this)
+                                      }, undefined, false, undefined, this);
+                                    }
+                                    return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                      style: { background: "rgba(43, 157, 244, 0.08)", padding: "6px 8px", borderRadius: 4, borderLeft: "3px solid rgba(43, 157, 244, 0.4)" },
+                                      children: [
+                                        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                          style: { fontSize: 11, fontWeight: 600, color: "var(--text-hint)", marginBottom: 4 },
+                                          children: "CHANGES:"
+                                        }, undefined, false, undefined, this),
+                                        Object.keys({ ...dbDiff.from, ...dbDiff.to }).map((key) => {
+                                          const fromVal = dbDiff.from[key];
+                                          const toVal = dbDiff.to[key];
+                                          const changed = fromVal !== toVal;
+                                          if (!changed)
+                                            return null;
+                                          return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+                                            style: { marginLeft: 8, fontSize: 11, marginTop: 2 },
+                                            children: [
+                                              /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                                style: { color: "var(--text-hint)" },
+                                                children: [
+                                                  key,
+                                                  "="
+                                                ]
+                                              }, undefined, true, undefined, this),
+                                              fromVal && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                                style: { background: "rgba(255, 80, 80, 0.2)", color: "#ffb3b3", padding: "1px 3px", borderRadius: 2, textDecoration: "line-through" },
+                                                children: fromVal
+                                              }, undefined, false, undefined, this),
+                                              fromVal && toVal && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                                style: { color: "var(--text-hint)", margin: "0 4px" },
+                                                children: "→"
+                                              }, undefined, false, undefined, this),
+                                              toVal && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                                style: { background: "rgba(80, 255, 120, 0.2)", color: "#90ee90", padding: "1px 3px", borderRadius: 2 },
+                                                children: toVal
+                                              }, undefined, false, undefined, this)
+                                            ]
+                                          }, key, true, undefined, this);
+                                        })
+                                      ]
+                                    }, undefined, true, undefined, this);
+                                  })()
+                                ]
+                              }, undefined, true, undefined, this) : isRemoveNode && reasonMatch ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV(jsx_dev_runtime.Fragment, {
+                                children: [
+                                  logMessage.substring(0, reasonMatch.index),
+                                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
+                                    style: { background: hasAssert ? "rgba(255, 0, 0, 0.3)" : isGraceful ? "rgba(255, 200, 100, 0.2)" : "rgba(255, 80, 80, 0.2)", color: hasAssert ? "#ff6666" : isGraceful ? "#ffdd99" : "#ffb3b3", padding: "2px 4px", borderRadius: 3, fontWeight: 600, boxShadow: hasAssert ? "0 0 4px rgba(255, 0, 0, 0.4)" : "none" },
+                                    children: reasonMatch[0]
+                                  }, undefined, false, undefined, this),
+                                  logMessage.substring(reasonMatch.index + reasonMatch[0].length)
+                                ]
+                              }, undefined, true, undefined, this) : logMessage
                             ]
-                          }, idx, true, undefined, this));
-                        });
-                        return elements;
-                      }()
-                    }, undefined, false, undefined, this)
-                  ]
-                }, undefined, true, undefined, this)
-              }, undefined, false, undefined, this)
-            ]
-          }, undefined, true, undefined, this)
+                          }, undefined, true, undefined, this)
+                        ]
+                      }, idx, true, undefined, this));
+                    });
+                    return elements;
+                  }()
+                }, undefined, false, undefined, this)
+              ]
+            }, undefined, true, undefined, this)
+          }, undefined, false, undefined, this)
         ]
       }, undefined, true, undefined, this)
     ]

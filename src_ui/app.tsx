@@ -4,23 +4,28 @@ import assert from '../assert';
 
 declare const fetch: any;
 declare const document: any;
+declare const window: any;
 
 type Instance = { process: string; sid: number; start: number; end: number; firstIso?: string; lastIso?: string; type?: string; address?: string };
 type DbSeg = { state: string; start: number; end: number; iso: string; message: string };
 type DbStates = Record<string, DbSeg[]>;
 type FailureProtocol = { dbName: string; sid: number; node: number; iteration: number; ts: number; iso: string; message: string; raw: string };
+type ServerTimeRange = { server: string; start: number; end: number; startIso: string; endIso: string };
 
 function clamp(v: number, min: number, max: number) { return Math.max(min, Math.min(max, v)) }
 
 function StackApp(): JSX.Element {
   const [path, setPath] = useState('tests/mock/nuoadmin.log');
-  const [loadMode, setLoadMode] = useState<'file' | 'nuosupport'>('nuosupport');
+  // Detect initial mode from URL - default to nuosupport unless explicitly at root with file mode
+  const initialMode = window.location.pathname === '/' || window.location.pathname.startsWith('/nuosupport') ? 'nuosupport' : 'file';
+  const [loadMode, setLoadMode] = useState<'file' | 'nuosupport'>(initialMode);
   const [zdTickets, setZdTickets] = useState<string[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<string>('');
   const [diagnosePackages, setDiagnosePackages] = useState<string[]>([]);
   const [selectedPackage, setSelectedPackage] = useState<string>('');
   const [servers, setServers] = useState<string[]>([]);
   const [selectedServer, setSelectedServer] = useState<string>('');
+  const [serverTimeRanges, setServerTimeRanges] = useState<ServerTimeRange[]>([]);
   const [instances, setInstances] = useState<Instance[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [dbStates, setDbStates] = useState<DbStates>({});
@@ -36,8 +41,8 @@ function StackApp(): JSX.Element {
   const [loadedServer, setLoadedServer] = useState<string>('');
   // Table filters & sorting
   const [filterType, setFilterType] = useState<string>('ALL');
-  const [filterAddr, setFilterAddr] = useState<string>('');
-  const [filterSid, setFilterSid] = useState<string>('');
+  const [filterServers, setFilterServers] = useState<Set<string>>(new Set());
+  const [filterSids, setFilterSids] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<'sid' | 'type' | 'address' | 'start' | 'end'>('sid');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [cursorX, setCursorX] = useState<number | null>(null);
@@ -50,6 +55,37 @@ function StackApp(): JSX.Element {
   const [panelFocus, setPanelFocus] = useState<'timeline' | 'table' | 'events'>('timeline');
   const [focusedTimelineItem, setFocusedTimelineItem] = useState<{type: 'ap' | 'unclassified' | 'db' | 'sid', key: string, index: number} | null>(null);
   const [hoveredBar, setHoveredBar] = useState<{type: 'process' | 'db' | 'frp', id: string, content: string} | null>(null);
+  const [mousePos, setMousePos] = useState<{x: number, y: number}>({x: 0, y: 0});
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [apsCollapsed, setApsCollapsed] = useState(false);
+  const [serverDropdownOpen, setServerDropdownOpen] = useState(false);
+  const [sidDropdownOpen, setSidDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as any;
+      if (serverDropdownOpen && target && target.closest && !target.closest('.server-dropdown-container')) {
+        setServerDropdownOpen(false);
+      }
+      if (sidDropdownOpen && target && target.closest && !target.closest('.sid-dropdown-container')) {
+        setSidDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [serverDropdownOpen, sidDropdownOpen]);
+
+  // Update URL to /nuosupport if at root and in nuosupport mode
+  useEffect(() => {
+    if (loadMode === 'nuosupport' && window.location.pathname === '/') {
+      window.history.replaceState({}, '', '/nuosupport');
+    }
+  }, [loadMode]);
 
   async function load(p = path) {
     setLoading(true);
@@ -112,7 +148,10 @@ function StackApp(): JSX.Element {
   useEffect(() => {
     // Parse URL parameters like /nuosupport/zd12345/diagnose-20231201/server01
     const urlPath = window.location.pathname;
-    const match = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+    // Match patterns: /nuosupport/:ticket, /nuosupport/:ticket/:package, or /nuosupport/:ticket/:package/:server
+    const fullMatch = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+    const packageMatch = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)$/);
+    const ticketMatch = urlPath.match(/\/nuosupport\/([^\/]+)$/);
     
     console.log('Fetching ZD tickets...');
     fetch('/list-tickets')
@@ -127,14 +166,18 @@ function StackApp(): JSX.Element {
           setZdTickets(json.tickets);
           
           // If URL has parameters, set them
-          if (match) {
-            const [, ticket, pkg, server] = match;
-            setLoadMode('nuosupport');
+          if (fullMatch) {
+            const [, ticket, pkg, server] = fullMatch;
             setSelectedTicket(ticket);
-            // Package and server will be set by their respective useEffects
-            // Store them temporarily
             (window as any).__initialPackage = pkg;
             (window as any).__initialServer = server;
+          } else if (packageMatch) {
+            const [, ticket, pkg] = packageMatch;
+            setSelectedTicket(ticket);
+            (window as any).__initialPackage = pkg;
+          } else if (ticketMatch) {
+            const [, ticket] = ticketMatch;
+            setSelectedTicket(ticket);
           }
         } else if (json.error) {
           console.error('Error from server:', json.error);
@@ -150,6 +193,18 @@ function StackApp(): JSX.Element {
       setSelectedPackage('');
       return;
     }
+    
+    // Clear selected package first to avoid fetching with stale values
+    setSelectedPackage('');
+    setSelectedServer('');
+    setServers([]);
+    setServerTimeRanges([]);
+    
+    // Update URL when ticket is selected (skip if we're loading from URL initially)
+    if (loadMode === 'nuosupport' && !(window as any).__initialPackage) {
+      window.history.pushState({}, '', `/nuosupport/${selectedTicket}`);
+    }
+    
     fetch(`/list-diagnose-packages?ticket=${encodeURIComponent(selectedTicket)}`)
       .then((res: any) => res.json())
       .then((json: any) => {
@@ -173,29 +228,79 @@ function StackApp(): JSX.Element {
     if (!selectedTicket || !selectedPackage) {
       setServers([]);
       setSelectedServer('');
+      setServerTimeRanges([]);
       return;
     }
+    
+    // Validate that the selected package belongs to the current ticket
+    if (!diagnosePackages.includes(selectedPackage)) {
+      console.log('Skipping server fetch - package not in current ticket');
+      return;
+    }
+    
+    // Update URL when package is selected (skip if we're loading from URL initially)
+    if (loadMode === 'nuosupport' && !(window as any).__initialServer) {
+      window.history.pushState({}, '', `/nuosupport/${selectedTicket}/${selectedPackage}`);
+    }
+    
     // Reset selected server when package changes
     setSelectedServer('');
     setServers([]);
+    setServerTimeRanges([]);
+    setLoading(true);
     
-    fetch(`/list-servers?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}`)
-      .then((res: any) => res.json())
+    // Load server time ranges for timeline visualization
+    console.log('Fetching server time ranges for:', selectedTicket, selectedPackage);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      console.error('Server time ranges fetch timed out after 30s');
+    }, 30000); // 30 second timeout
+    
+    fetch(`/server-time-ranges?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}`, {
+      signal: controller.signal
+    })
+      .then((res: any) => {
+        clearTimeout(timeoutId);
+        console.log('Server time ranges response status:', res.status);
+        return res.json();
+      })
       .then((json: any) => {
-        if (json.servers) {
-          setServers(json.servers);
+        console.log('Server time ranges data:', json);
+        setLoading(false);
+        if (json.error) {
+          console.error('Server time ranges error:', json.error);
+          // Don't show alert, just log the error
+          return;
+        }
+        if (json.serverRanges) {
+          console.log(`Loaded ${json.serverRanges.length} server ranges`);
+          setServerTimeRanges(json.serverRanges);
+          const servers = json.serverRanges.map((r: ServerTimeRange) => r.server);
+          setServers(servers);
           // Check if we have a server from URL
           const initialServer = (window as any).__initialServer;
-          if (initialServer && json.servers.includes(initialServer)) {
+          if (initialServer && servers.includes(initialServer)) {
             setSelectedServer(initialServer);
             delete (window as any).__initialServer;
-          } else if (json.servers.length > 0) {
-            setSelectedServer(json.servers[0]);
+          } else if (servers.length > 0) {
+            // Select first server by default
+            setSelectedServer(servers[0]);
           }
         }
       })
-      .catch((e: any) => console.error('Failed to load servers:', e));
-  }, [selectedTicket, selectedPackage]);
+      .catch((e: any) => {
+        clearTimeout(timeoutId);
+        setLoading(false);
+        if (e.name === 'AbortError') {
+          console.error('Server time ranges fetch was aborted (timeout)');
+          // Don't show alert for timeout
+        } else {
+          console.error('Failed to load server time ranges:', e);
+          // Don't show alert, just log
+        }
+      });
+  }, [selectedTicket, selectedPackage, diagnosePackages]);
 
   // Automatically load when server is selected
   useEffect(() => {
@@ -255,29 +360,42 @@ function StackApp(): JSX.Element {
   }, [dragging, globalStart, globalEnd, rangeStart, rangeEnd]);
 
   // visible instances intersecting selection
-  const visible = instances.filter(i => i.end >= gStart && i.start <= gEnd);
+  // For processes without RemoveNodeCommand, they're still running so check against globalEnd
+  const visible = instances.filter(i => {
+    const removeEvents = events.filter((e: any) => {
+      return e.sid === i.sid && /RemoveNodeCommand/.test(e.message ?? '');
+    });
+    const effectiveEnd = removeEvents.length > 0 ? i.end : globalEnd;
+    return effectiveEnd >= gStart && i.start <= gEnd;
+  });
 
-  // Group rows by sid (the engine/process id). The `process` field in the instance is the admin process
-  // that reported the instance, so grouping by `sid` gives each engine its own row.
-  const rowsBySid: Record<string, Instance[]> = {};
+  // Build filter options (types list) - use all instances for filter options
+  const allRowsBySid: Record<string, Instance[]> = {};
   for (const inst of instances) {
     const key = String(inst.sid);
-    (rowsBySid[key] ||= []).push(inst);
+    (allRowsBySid[key] ||= []).push(inst);
   }
-
-  // Helper: get type for an instance, falling back to any from same sid
-  const instanceType = (i: Instance): string => i.type ?? (rowsBySid[String(i.sid)]?.find(x => x.type)?.type) ?? '';
-
-  // Build filter options (types list)
+  const instanceType = (i: Instance): string => i.type ?? (allRowsBySid[String(i.sid)]?.find(x => x.type)?.type) ?? '';
   const typeOptions = Array.from(new Set(instances.map(instanceType).filter(Boolean))).sort();
+  const allServers = Array.from(new Set(instances.map(i => i.address).filter(Boolean) as string[])).sort();
+  const allSids = Array.from(new Set(instances.map(i => String(i.sid)))).sort((a, b) => Number(a) - Number(b));
   // Apply filters
   const filtered = visible.filter(i => {
     const t = instanceType(i);
     if (filterType !== 'ALL' && t !== filterType) return false;
-    if (filterAddr.trim() && !(String(i.address ?? '').toLowerCase().includes(filterAddr.trim().toLowerCase()))) return false;
-    if (filterSid.trim() && !(String(i.sid).includes(filterSid.trim()))) return false;
+    // Empty filterServers means ALL servers (default behavior)
+    if (filterServers.size > 0 && !filterServers.has(i.address ?? '')) return false;
+    // Empty filterSids means ALL sids (default behavior)
+    if (filterSids.size > 0 && !filterSids.has(String(i.sid))) return false;
     return true;
   });
+
+  // Group filtered rows by sid for timeline display
+  const rowsBySid: Record<string, Instance[]> = {};
+  for (const inst of filtered) {
+    const key = String(inst.sid);
+    (rowsBySid[key] ||= []).push(inst);
+  }
 
   // Sorting
   const comparator = (a: Instance, b: Instance) => {
@@ -407,9 +525,11 @@ function StackApp(): JSX.Element {
               if (row && row.type === 'db') {
                 setSelectedDb(row.key);
                 setSelectedSid(null);
+                setSelectedUnclassified(false);
               } else if (row && row.type === 'instance' && 'instance' in row && row.instance) {
                 setSelectedSid(row.instance.sid);
                 setSelectedDb(null);
+                setSelectedUnclassified(false);
               }
             }
           }
@@ -494,10 +614,12 @@ function StackApp(): JSX.Element {
               if (row && row.type === 'db') {
                 setSelectedDb(row.key);
                 setSelectedSid(null);
+                setSelectedUnclassified(false);
                 setFocusedTimelineItem({type: 'db', key: row.key, index: 0});
               } else if (row && row.type === 'instance' && 'instance' in row && row.instance) {
                 setSelectedSid(row.instance.sid);
                 setSelectedDb(null);
+                setSelectedUnclassified(false);
                 setFocusedTimelineItem({type: 'sid', key: String(row.instance.sid), index: 0});
               }
             }
@@ -513,14 +635,24 @@ function StackApp(): JSX.Element {
         if (selectedUnclassified) {
           eventCount = unclassifiedEvents.length;
         } else if (selectedDb !== null) {
-          eventCount = (dbStates[selectedDb] || []).length;
+          // Count all database events (state events + specific events)
+          const dbStateEvents = dbStates[selectedDb] || [];
+          const dbSpecificEvents = databaseEvents.filter((e: any) => {
+            const msg = e.message ?? '';
+            const raw = e.raw ?? '';
+            return msg.includes(selectedDb) || raw.includes(selectedDb);
+          });
+          eventCount = dbStateEvents.length + dbSpecificEvents.length;
         } else if (selectedSid !== null) {
-          const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, 'i');
           const instsForSid = rowsBySid[String(selectedSid)] || [];
           const related = events.filter((e: any) => {
-            const raw = e.raw ?? '';
-            const msg = e.message ?? '';
-            return sidRe.test(raw) || sidRe.test(msg);
+            // Exact match for events with a startId
+            if (e.sid === selectedSid) return true;
+            // Include events without a startId if they fall within the process's lifetime
+            if (e.sid === null && instsForSid.length > 0) {
+              return instsForSid.some(inst => e.ts >= inst.start && e.ts <= inst.end);
+            }
+            return false;
           });
           const frpForSid = failureProtocols.filter(frp => frp.sid === selectedSid);
           eventCount = related.length + frpForSid.length;
@@ -552,97 +684,236 @@ function StackApp(): JSX.Element {
     };
     (document as any).addEventListener('keydown', handleKeyDown);
     return () => (document as any).removeEventListener('keydown', handleKeyDown);
-  }, [focusedRowIndex, focusedEventIndex, focusedTimelineItem, panelFocus, allTableRows, selectedSid, selectedDb, selectedUnclassified, dbStates, events, failureProtocols, rowsBySid, addresses, groupsByAddress, hasUnclassified]);
+  }, [focusedRowIndex, focusedEventIndex, focusedTimelineItem, panelFocus, allTableRows, selectedSid, selectedDb, selectedUnclassified, dbStates, databaseEvents, events, failureProtocols, rowsBySid, addresses, groupsByAddress, hasUnclassified]);
 
   return (
     <div className="app">
       <div className="controls">
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 12 }}>
-          <label>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, width: '100%' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             Load from:
-            <select value={loadMode} onChange={(e: any) => setLoadMode(e.target.value)} style={{ marginLeft: 6 }}>
+            <select value={loadMode} onChange={(e: any) => setLoadMode(e.target.value)}>
               <option value="nuosupport">nuosupport</option>
               <option value="file">file path</option>
             </select>
           </label>
-        </div>
         
         {loadMode === 'file' ? (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <label>Log path: <input value={path} onChange={(e: any) => setPath(e.target.value)} style={{ width: 360 }} /></label>
+          <>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              Log path:
+              <input type="text" value={path} onChange={(e: any) => setPath(e.target.value)} style={{ width: 360 }} />
+            </label>
             <button onClick={() => load()} disabled={loading}>Load</button>
-          </div>
+          </>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label>
-                ZD Ticket:
-                <select value={selectedTicket} onChange={(e: any) => setSelectedTicket(e.target.value)} style={{ marginLeft: 6, minWidth: 120 }}>
-                  <option value="">Select ticket...</option>
-                  {zdTickets.slice().reverse().map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                {zdTickets.length > 0 && (
-                  <span style={{ fontSize: 11, color: '#7da3b8', marginLeft: 6 }}>
-                    ({zdTickets.length} tickets loaded)
-                  </span>
-                )}
-              </label>
-              {zdTickets.length === 0 && (
-                <span style={{ fontSize: 11, color: '#ff8888' }}>
-                  Loading tickets... (Check console for errors)
-                </span>
-              )}
-              <label>
-                Diagnose Package:
-                <select value={selectedPackage} onChange={(e: any) => setSelectedPackage(e.target.value)} style={{ marginLeft: 6, minWidth: 200 }} disabled={!selectedTicket}>
-                  <option value="">Select package...</option>
-                  {diagnosePackages.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </label>
-              <label>
-                Server:
-                <select 
-                  value={selectedServer} 
-                  onChange={(e: any) => setSelectedServer(e.target.value)} 
-                  onKeyDown={(e: any) => {
-                    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                      const select = e.target;
-                      const currentIndex = select.selectedIndex;
-                      let newIndex = currentIndex;
-                      
-                      if (e.key === 'ArrowDown' && currentIndex < select.options.length - 1) {
-                        newIndex = currentIndex + 1;
-                      } else if (e.key === 'ArrowUp' && currentIndex > 0) {
-                        newIndex = currentIndex - 1;
-                      }
-                      
-                      if (newIndex !== currentIndex && newIndex > 0) {
-                        const newValue = select.options[newIndex].value;
-                        if (newValue) {
-                          setSelectedServer(newValue);
-                        }
-                      }
-                    }
-                  }}
-                  style={{ marginLeft: 6, minWidth: 250 }} 
-                  disabled={!selectedPackage}
-                >
-                  <option value="">Select server...</option>
-                  {servers.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </label>
-              {loading && <span style={{ color: '#7da3b8', fontSize: 13 }}>Loading...</span>}
-            </div>
-            {loadedServer && (
-              <div style={{ fontSize: 13, color: '#7da3b8', fontStyle: 'italic' }}>
-                Loaded all nuoadmin.log* files from: {loadedServer}
-              </div>
-            )}
-          </div>
+          <>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              ZD Ticket:
+              <select value={selectedTicket} onChange={(e: any) => setSelectedTicket(e.target.value)} style={{ minWidth: 120 }}>
+                <option value="">Select ticket...</option>
+                {zdTickets.slice().reverse().map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              Diagnose Package:
+              <select value={selectedPackage} onChange={(e: any) => setSelectedPackage(e.target.value)} style={{ minWidth: 200 }} disabled={!selectedTicket}>
+                <option value="">Select package...</option>
+                {diagnosePackages.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </label>
+            {loading && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading...</span>}
+          </>
         )}
+        
+        <button 
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          style={{ marginLeft: 'auto', justifySelf: 'flex-end', fontSize: 16 }}
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+        >
+          {theme === 'dark' ? '◐' : '◑'}
+        </button>
       </div>
+      
+    </div>
 
-      <div className="timeline">
+      {/* Server Timeline - shown when package is selected in NuoSupport mode */}
+      {loadMode === 'nuosupport' && selectedPackage && (
+        <div style={{ marginBottom: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 6, padding: 12 }}>
+          <div 
+            style={{ fontSize: 13, fontWeight: 600, marginBottom: apsCollapsed && selectedServer ? 8 : (apsCollapsed ? 0 : 8), color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}
+            onClick={() => setApsCollapsed(!apsCollapsed)}
+          >
+            <span style={{ fontSize: 11, transform: apsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'inline-block' }}>▼</span>
+            Logs from servers
+          </div>
+          {apsCollapsed && selectedServer && (() => {
+            const allStarts = serverTimeRanges.map(r => r.start);
+            const allEnds = serverTimeRanges.map(r => r.end);
+            const minTs = Math.min(...allStarts);
+            const maxTs = Math.max(...allEnds);
+            const timeSpan = maxTs - minTs || 1;
+            const selectedRange = serverTimeRanges.find(r => r.server === selectedServer);
+            if (!selectedRange) return null;
+            
+            const left = ((selectedRange.start - minTs) / timeSpan) * 100;
+            const width = ((selectedRange.end - selectedRange.start) / timeSpan) * 100;
+            
+            return (
+              <div style={{ position: 'relative' }}>
+                {/* Time axis labels */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-hint)', marginBottom: 4, paddingLeft: 200, paddingRight: 8 }}>
+                  <span>{new Date(minTs).toISOString().replace('T', ' ').substring(0, 19)}</span>
+                  <span>{new Date(maxTs).toISOString().replace('T', ' ').substring(0, 19)}</span>
+                </div>
+                <div 
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                  onMouseEnter={(e) => {
+                    setMousePos({ x: e.clientX, y: e.clientY });
+                    setHoveredBar({
+                      type: 'process',
+                      id: selectedRange.server,
+                      content: `${selectedRange.server}\n${selectedRange.startIso} → ${selectedRange.endIso}\nDuration: ${Math.round((selectedRange.end - selectedRange.start) / 1000 / 60)} minutes`
+                    });
+                  }}
+                  onMouseLeave={() => setHoveredBar(null)}
+                  onMouseMove={(e) => setMousePos({ x: e.clientX, y: e.clientY })}
+                >
+                  <div style={{ 
+                    width: 190, 
+                    fontSize: 12, 
+                    color: 'var(--accent)',
+                    fontWeight: 600,
+                    textAlign: 'right',
+                    paddingRight: 8,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {selectedRange.server}
+                  </div>
+                  <div style={{ flex: 1, position: 'relative', height: 20 }}>
+                    <div style={{
+                      position: 'absolute',
+                      left: `${left}%`,
+                      width: `${width}%`,
+                      height: '100%',
+                      background: 'hsl(30, 60%, 45%)',
+                      borderRadius: 3,
+                      border: '2px solid hsl(30, 65%, 40%)',
+                      boxShadow: '0 0 8px rgba(160, 100, 40, 0.4)'
+                    }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          {!apsCollapsed && (serverTimeRanges.length === 0 ? (
+            <div style={{ color: 'var(--text-hint)', fontSize: 13, padding: 8 }}>Loading APs...</div>
+          ) : (
+          (function() {
+            const allStarts = serverTimeRanges.map(r => r.start);
+            const allEnds = serverTimeRanges.map(r => r.end);
+            const minTs = Math.min(...allStarts);
+            const maxTs = Math.max(...allEnds);
+            const timeSpan = maxTs - minTs || 1;
+            
+            return (
+              <div style={{ position: 'relative' }}>
+                {/* Time axis labels */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-hint)', marginBottom: 4, paddingLeft: 200, paddingRight: 8 }}>
+                  <span>{new Date(minTs).toISOString().replace('T', ' ').substring(0, 19)}</span>
+                  <span>{new Date(maxTs).toISOString().replace('T', ' ').substring(0, 19)}</span>
+                </div>
+                
+                {/* Server bars */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {serverTimeRanges.map((range, idx) => {
+                    const left = ((range.start - minTs) / timeSpan) * 100;
+                    const width = ((range.end - range.start) / timeSpan) * 100;
+                    const isSelected = selectedServer === range.server;
+                    
+                    return (
+                      <div 
+                        key={range.server}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                        onClick={() => setSelectedServer(range.server)}
+                        onMouseEnter={(e) => {
+                          setMousePos({ x: e.clientX, y: e.clientY });
+                          setHoveredBar({
+                            type: 'process',
+                            id: range.server,
+                            content: `${range.server}\n${range.startIso} → ${range.endIso}\nDuration: ${Math.round((range.end - range.start) / 1000 / 60)} minutes`
+                          });
+                        }}
+                        onMouseLeave={() => setHoveredBar(null)}
+                        onMouseMove={(e) => setMousePos({ x: e.clientX, y: e.clientY })}
+                      >
+                        <div style={{ 
+                          width: 190, 
+                          fontSize: 12, 
+                          color: isSelected ? 'var(--accent)' : 'var(--text-secondary)',
+                          fontWeight: isSelected ? 600 : 400,
+                          textAlign: 'right',
+                          paddingRight: 8,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {range.server}
+                        </div>
+                        <div style={{ flex: 1, position: 'relative', height: 20 }}>
+                          <div style={{
+                            position: 'absolute',
+                            left: `${left}%`,
+                            width: `${width}%`,
+                            height: '100%',
+                            background: isSelected ? 'hsl(30, 60%, 45%)' : 'hsl(30, 50%, 55%)',
+                            borderRadius: 3,
+                            border: isSelected ? '2px solid hsl(30, 65%, 40%)' : '1px solid rgba(255, 255, 255, 0.2)',
+                            boxShadow: isSelected ? '0 0 8px rgba(160, 100, 40, 0.4)' : 'none',
+                            transition: 'all 0.2s ease'
+                          }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )
+          })()
+          ))}
+        </div>
+      )}
+
+      {/* Loading spinner - shown when loading server data */}
+      {loading && loadMode === 'nuosupport' && (
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          padding: '60px 20px',
+          color: 'var(--text-muted)',
+          fontSize: 14
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ 
+              width: 40, 
+              height: 40, 
+              border: '3px solid var(--border-primary)', 
+              borderTopColor: 'var(--accent)', 
+              borderRadius: '50%', 
+              animation: 'spin 1s linear infinite',
+              margin: '0 auto 12px'
+            }} />
+            Loading data as per AP...
+          </div>
+        </div>
+      )}
+
+      {/* Main content - hidden when loading */}
+      {(!loading || loadMode !== 'nuosupport') && (
+      <div className="timeline" onMouseMove={(e: any) => setMousePos({x: e.clientX, y: e.clientY})}>
         {/* Database state row(s) */}
         {Object.keys(dbStates || {}).length > 0 ? (
           <div className="stack-area" style={{ position: 'relative' }} onMouseMove={(e: any) => { const rect = e.currentTarget.getBoundingClientRect(); setCursorX(e.clientX - rect.left); }} onMouseLeave={() => setCursorX(null)}>
@@ -652,10 +923,9 @@ function StackApp(): JSX.Element {
                 <div key={`db-${db}`} className="stack-row" style={{ opacity: 0.95, cursor: 'pointer', outline: focusedTimelineItem?.type === 'db' && focusedTimelineItem?.key === db ? '2px solid rgba(43, 157, 244, 0.6)' : 'none', outlineOffset: -2 }} onClick={() => { setFocusedTimelineItem({type: 'db', key: db, index: 0}); setPanelFocus('timeline'); setSelectedDb(db); setSelectedSid(null); }}>
                   <div className="stack-label">DB {db}</div>
                   <div className="stack-track">
-                    <div className="selection-overlay" style={{ left: `${((gStart - globalStart) / (globalEnd - globalStart)) * 100}%`, right: `${100 - ((gEnd - globalStart) / (globalEnd - globalStart)) * 100}%` }} />
                     {segs.map((seg, idx) => {
-                      const left = ((seg.start - globalStart) / (globalEnd - globalStart)) * 100;
-                      const right = ((seg.end - globalStart) / (globalEnd - globalStart)) * 100;
+                      const left = ((seg.start - gStart) / (gEnd - gStart)) * 100;
+                      const right = ((seg.end - gStart) / (gEnd - gStart)) * 100;
                       const width = Math.max(0.2, right - left);
                       const bg = stateColor(seg.state);
                       const tooltipContent = `${seg.state} — ${seg.iso}\n${seg.message}`;
@@ -668,7 +938,7 @@ function StackApp(): JSX.Element {
                           onMouseEnter={() => setHoveredBar({type: 'db', id: barId, content: tooltipContent})}
                           onMouseLeave={() => setHoveredBar(null)}
                         />
-                      );
+                      )
                     })}
                     {/* Add UpdateDatabaseOptionsCommand events as diamonds */}
                     {/* Add UpdateDatabaseOptionsCommand events as slivers */}
@@ -703,7 +973,7 @@ function StackApp(): JSX.Element {
                       const groupThreshold = 0.5; // 0.5% of timeline
                       
                       dbEvents.forEach((ev: any) => {
-                        const left = ((ev.ts - globalStart) / (globalEnd - globalStart)) * 100;
+                        const left = ((ev.ts - gStart) / (gEnd - gStart)) * 100;
                         const lastGroup = groupedEvents[groupedEvents.length - 1];
                         
                         if (lastGroup && Math.abs(left - lastGroup.left) < groupThreshold) {
@@ -736,12 +1006,12 @@ function StackApp(): JSX.Element {
                             onMouseEnter={() => setHoveredBar({type: 'frp', id: sliverId, content: tooltipContent})}
                             onMouseLeave={() => setHoveredBar(null)}
                           />
-                        );
-                      });
+                        )
+                      })
                     })()}
                   </div>
                 </div>
-              );
+              )
             })}
           </div>
         ) : (
@@ -778,9 +1048,8 @@ function StackApp(): JSX.Element {
             >
               <div className="stack-label">Unclassified Events ({unclassifiedEvents.length})</div>
               <div className="stack-track">
-                <div className="selection-overlay" style={{ left: `${((gStart - globalStart) / (globalEnd - globalStart)) * 100}%`, right: `${100 - ((gEnd - globalStart) / (globalEnd - globalStart)) * 100}%` }} />
                 {unclassifiedEvents.map((ev: any, idx: number) => {
-                  const left = ((ev.ts - globalStart) / (globalEnd - globalStart)) * 100;
+                  const left = ((ev.ts - gStart) / (gEnd - gStart)) * 100;
                   const dotId = `unclassified-${idx}`;
                   return (
                     <div 
@@ -807,6 +1076,193 @@ function StackApp(): JSX.Element {
           </div>
         )}
         
+        {/* Filter bar - positioned between database and processes */}
+        <div style={{ display: 'flex', gap: 12, padding: '12px 0', borderTop: '1px solid var(--border-primary)', borderBottom: '1px solid var(--border-primary)', marginTop: 12, marginBottom: 12, alignItems: 'center' }}>
+          <div className="server-dropdown-container" style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <label style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 50 }}>Server:</label>
+            <button
+              onClick={() => setServerDropdownOpen(!serverDropdownOpen)}
+              style={{ 
+                padding: '4px 8px', 
+                background: 'var(--input-bg)', 
+                border: '1px solid var(--input-border)', 
+                borderRadius: 4, 
+                color: 'var(--text-primary)', 
+                fontSize: 12,
+                cursor: 'pointer',
+                minWidth: 120,
+                textAlign: 'left',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}
+            >
+              <span>{filterServers.size === 0 ? 'ALL' : `${filterServers.size} selected`}</span>
+              <span style={{ fontSize: 10 }}>{serverDropdownOpen ? '\u25b2' : '\u25bc'}</span>
+            </button>
+            {serverDropdownOpen && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                left: 50,
+                marginTop: 4,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-primary)',
+                borderRadius: 4,
+                padding: 8,
+                zIndex: 1000,
+                maxHeight: 300,
+                overflowY: 'auto',
+                minWidth: 200,
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+              }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer', borderRadius: 3, fontWeight: 600 }}>
+                  <input 
+                    type="checkbox" 
+                    checked={filterServers.size === 0}
+                    onChange={(e: any) => {
+                      if (e.target.checked) {
+                        setFilterServers(new Set());
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span>ALL</span>
+                </label>
+                {allServers.map(server => (
+                  <label key={server} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer', borderRadius: 3 }}>
+                    <input 
+                      type="checkbox" 
+                      checked={filterServers.size === 0 || filterServers.has(server)}
+                      onChange={(e: any) => {
+                        const newSet = new Set(filterServers);
+                        if (e.target.checked) {
+                          newSet.add(server);
+                          if (newSet.size === allServers.length) {
+                            setFilterServers(new Set());
+                          } else {
+                            setFilterServers(newSet);
+                          }
+                        } else {
+                          if (filterServers.size === 0) {
+                            const allExceptThis = new Set(allServers.filter(s => s !== server));
+                            setFilterServers(allExceptThis);
+                          } else {
+                            newSet.delete(server);
+                            setFilterServers(newSet);
+                          }
+                        }
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span>{server}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="sid-dropdown-container" style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <label style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 30 }}>SID:</label>
+            <button
+              onClick={() => setSidDropdownOpen(!sidDropdownOpen)}
+              style={{ 
+                padding: '4px 8px', 
+                background: 'var(--input-bg)', 
+                border: '1px solid var(--input-border)', 
+                borderRadius: 4, 
+                color: 'var(--text-primary)', 
+                fontSize: 12,
+                cursor: 'pointer',
+                minWidth: 100,
+                textAlign: 'left',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}
+            >
+              <span>{filterSids.size === 0 ? 'ALL' : `${filterSids.size} selected`}</span>
+              <span style={{ fontSize: 10 }}>{sidDropdownOpen ? '\u25b2' : '\u25bc'}</span>
+            </button>
+            {sidDropdownOpen && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                left: 30,
+                marginTop: 4,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-primary)',
+                borderRadius: 4,
+                padding: 8,
+                zIndex: 1000,
+                maxHeight: 300,
+                overflowY: 'auto',
+                minWidth: 150,
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+              }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer', borderRadius: 3, fontWeight: 600 }}>
+                  <input 
+                    type="checkbox" 
+                    checked={filterSids.size === 0}
+                    onChange={(e: any) => {
+                      if (e.target.checked) {
+                        setFilterSids(new Set());
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span>ALL</span>
+                </label>
+                {allSids.map(sid => (
+                  <label key={sid} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer', borderRadius: 3 }}>
+                    <input 
+                      type="checkbox" 
+                      checked={filterSids.size === 0 || filterSids.has(sid)}
+                      onChange={(e: any) => {
+                        const newSet = new Set(filterSids);
+                        if (e.target.checked) {
+                          newSet.add(sid);
+                          if (newSet.size === allSids.length) {
+                            setFilterSids(new Set());
+                          } else {
+                            setFilterSids(newSet);
+                          }
+                        } else {
+                          if (filterSids.size === 0) {
+                            const allExceptThis = new Set(allSids.filter(s => s !== sid));
+                            setFilterSids(allExceptThis);
+                          } else {
+                            newSet.delete(sid);
+                            setFilterSids(newSet);
+                          }
+                        }
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span>{sid}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <label style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 40 }}>Type:</label>
+            <select 
+              value={filterType} 
+              onChange={(e: any) => setFilterType(e.target.value)} 
+              style={{ padding: '4px 8px', background: 'var(--input-bg)', border: '1px solid var(--input-border)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 12 }}
+            >
+              <option value="ALL">ALL</option>
+              {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <button 
+            onClick={() => { setFilterSids(new Set()); setFilterType('ALL'); setFilterServers(new Set()); }} 
+            style={{ padding: '4px 12px', background: 'var(--button-bg)', border: '1px solid var(--button-border)', borderRadius: 4, color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+          >
+            Reset filters
+          </button>
+        </div>
+        
         <div className="stack-area" style={{ position: 'relative' }} onMouseMove={(e: any) => { const rect = e.currentTarget.getBoundingClientRect(); setCursorX(e.clientX - rect.left); }} onMouseLeave={() => setCursorX(null)}>
           {cursorX !== null && <div style={{ position: 'absolute', left: cursorX, top: 0, bottom: 0, width: 1, background: 'rgba(255, 255, 255, 0.3)', pointerEvents: 'none', zIndex: 100 }} />}
           {addresses.map((addr) => {
@@ -819,10 +1275,12 @@ function StackApp(): JSX.Element {
                 </div>
                 {sids.map((sid, sidIndexInGroup) => {
                   const procInst = (rowsBySid[sid] || []).sort((a, b) => a.start - b.start);
+                  if (procInst.length === 0) return null;
+                  
                   const first = procInst[0];
                   // prefer any available type for this sid (some occurrences may have type missing)
                   const anyType = procInst.find(x => x.type && x.type.length > 0)?.type ?? undefined;
-                  const label = first ? `sid ${sid}${anyType ? ' — ' + anyType : ''}` : `sid ${sid}`;
+                  const label = `${anyType ? anyType + ' - ' : ''}${sid}`;
 
                   // Determine base color by type: SM=blue, TE=orange, fallback=gray
                   let baseHue = 200; // default gray-blue
@@ -849,25 +1307,54 @@ function StackApp(): JSX.Element {
                     }
                   const hue = baseHue + hueVariation;
 
+                  // Detect issues for this sid (for border styling)
+                  const hasFailureProtocol = failureProtocols.some(frp => frp.sid === Number(sid));
+                  const removeEvents = events.filter((e: any) => {
+                    return e.sid === Number(sid) && /RemoveNodeCommand/.test(e.message ?? '');
+                  });
+                  const hasNonGracefulRemoval = removeEvents.some(e => !/Gracefully shutdown engine/i.test(e.message ?? ''));
+                  const hasAssert = removeEvents.some(e => {
+                    const reasonMatch = e.message?.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/);
+                    return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+                  });
+                  const hasIssue = hasFailureProtocol || hasNonGracefulRemoval || hasAssert;
+                  const isCritical = hasAssert || hasFailureProtocol;
+
                   return (
-                    <div key={`sidrow-${sid}`} className="stack-row layer" style={{ cursor: 'pointer', outline: focusedTimelineItem?.type === 'sid' && focusedTimelineItem?.key === sid ? '2px solid rgba(43, 157, 244, 0.6)' : 'none', outlineOffset: -2 }} onClick={() => { setFocusedTimelineItem({type: 'sid', key: sid, index: 0}); setPanelFocus('timeline'); setSelectedSid(Number(sid)); setSelectedDb(null); }}>
-                      <div className="stack-label">{label}</div>
+                    <div 
+                      key={`sidrow-${sid}`} 
+                      className="stack-row layer" 
+                      style={{ 
+                        cursor: 'pointer', 
+                        outline: focusedTimelineItem?.type === 'sid' && focusedTimelineItem?.key === sid ? '2px solid rgba(43, 157, 244, 0.6)' : 'none', 
+                        outlineOffset: -2,
+                        borderLeft: hasIssue ? (isCritical ? '3px solid #ff0000' : '3px solid #ff8844') : undefined,
+                        boxShadow: hasIssue ? (isCritical ? '0 0 8px rgba(255, 0, 0, 0.3)' : '0 0 6px rgba(255, 136, 68, 0.2)') : undefined
+                      }} 
+                      onClick={() => { setFocusedTimelineItem({type: 'sid', key: sid, index: 0}); setPanelFocus('timeline'); setSelectedSid(Number(sid)); setSelectedDb(null); setSelectedUnclassified(false); }}
+                    >
+                      <div className="stack-label">
+                        {label}
+                        {hasAssert && <span style={{ marginLeft: 6, color: '#ff6666', fontSize: 11, fontWeight: 600 }} title="ASSERT detected">⚠</span>}
+                        {hasFailureProtocol && <span style={{ marginLeft: 6, color: '#ff4444', fontSize: 11, fontWeight: 600 }} title="Failure Protocol">⚠</span>}
+                      </div>
                       <div className="stack-track">
-                        <div className="selection-overlay" style={{ left: `${((gStart - globalStart) / (globalEnd - globalStart)) * 100}%`, right: `${100 - ((gEnd - globalStart) / (globalEnd - globalStart)) * 100}%` }} />
                         {procInst.map((inst, idx) => {
-                          // Check for all RemoveNodeCommand events for this sid
+                          // Check for all RemoveNodeCommand events for this sid using the parsed sid field
                           const removeEvents = events.filter((e: any) => {
-                            const msg = e.message ?? '';
-                            const sidMatch = new RegExp(`\\bstartId=${sid}\\b`, 'i').test(msg);
-                            return sidMatch && /RemoveNodeCommand/.test(msg);
+                            return e.sid === Number(sid) && /RemoveNodeCommand/.test(e.message ?? '');
                           });
                           const hasNonGracefulRemoval = removeEvents.some(e => !/Gracefully shutdown engine/i.test(e.message ?? ''));
                           
                           // If no RemoveNodeCommand found, extend bar to globalEnd (process still running)
                           const effectiveEnd = removeEvents.length > 0 ? inst.end : globalEnd;
                           
-                          const left = ((inst.start - globalStart) / (globalEnd - globalStart)) * 100;
-                          const right = ((effectiveEnd - globalStart) / (globalEnd - globalStart)) * 100;
+                          // Skip rendering if this instance doesn't overlap with visible range
+                          const instanceOverlaps = effectiveEnd >= gStart && inst.start <= gEnd;
+                          if (!instanceOverlaps) return null;
+                          
+                          const left = Math.max(0, ((inst.start - gStart) / (gEnd - gStart)) * 100);
+                          const right = Math.min(100, ((effectiveEnd - gStart) / (gEnd - gStart)) * 100);
                           const width = Math.max(0.2, right - left);
                           // Vary lightness per instance within the same sid
                           const lit = baseLit + (idx * 8) % 20 - 10;
@@ -902,7 +1389,7 @@ function StackApp(): JSX.Element {
                         })}
                         {/* Overlay failure protocol events for this sid */}
                         {failureProtocols.filter(frp => frp.sid === Number(sid)).map((frp, idx) => {
-                          const left = ((frp.ts - globalStart) / (globalEnd - globalStart)) * 100;
+                          const left = ((frp.ts - gStart) / (gEnd - gStart)) * 100;
                           const tooltipContent = frp.raw.replace(/^(\S+)\s+/, '$1\n');
                           const frpId = `frp-${sid}-${idx}`;
                           return (
@@ -931,7 +1418,7 @@ function StackApp(): JSX.Element {
                           const groupThreshold = 0.5;
                           
                           assertEvents.forEach((ev: any) => {
-                            const left = ((ev.ts - globalStart) / (globalEnd - globalStart)) * 100;
+                            const left = ((ev.ts - gStart) / (gEnd - gStart)) * 100;
                             const lastGroup = groupedEvents[groupedEvents.length - 1];
                             
                             if (lastGroup && Math.abs(left - lastGroup.left) < groupThreshold) {
@@ -971,179 +1458,109 @@ function StackApp(): JSX.Element {
                         })()}
                       </div>
                     </div>
-                  );
+                  )
                 })}
               </div>
-            );
-          })};
+            )
+          })}
         </div>
 
         {/* Popover for timeline bars */}
         {hoveredBar && (
           <div 
             style={{
-              position: 'absolute',
-              positionAnchor: `--${hoveredBar.id}` as any,
-              top: 'anchor(bottom)',
-              left: 'anchor(center)',
-              translate: '-50% 8px',
-              background: 'rgba(15, 30, 45, 0.98)',
-              border: '1px solid rgba(43, 157, 244, 0.4)',
+              position: 'fixed',
+              left: Math.min(mousePos.x + 12, window.innerWidth - 620),
+              top: Math.min(mousePos.y + 12, window.innerHeight - 200),
+              background: 'var(--popover-bg)',
+              border: '1px solid var(--popover-border)',
               borderRadius: 6,
               padding: '8px 12px',
-              color: '#e6eef6',
+              color: 'var(--text-primary)',
               fontSize: 13,
               whiteSpace: 'pre-wrap',
               zIndex: 1000,
               maxWidth: 600,
               boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
               pointerEvents: 'none'
-            } as any}
+            }}
           >
             {hoveredBar.content}
           </div>
         )}
 
-        {/* Double-handle range slider */}
+        {/* Double-handle range slider with minimap */}
         <div style={{ display: 'flex', marginTop: 8, marginBottom: 12 }}>
           <div style={{ width: 'var(--label-width)', flexShrink: 0 }} />
-          <div className="range-slider-track" style={{ flex: 1, position: 'relative', height: 40 }}>
-            <div style={{ position: 'absolute', top: 12, left: 0, right: 0, height: 4, background: '#1b2b3a', borderRadius: 2 }}>
+          <div className="range-slider-track" style={{ flex: 1, position: 'relative', height: 80 }}>
+            {/* Minimap background */}
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 60, background: 'var(--bg-secondary)', borderRadius: 4, border: '1px solid var(--border-secondary)' }}>
+              {/* Database states minimap */}
+              {Object.keys(dbStates || {}).map((dbName, dbIdx) => {
+                const segments = dbStates[dbName] || [];
+                return segments.map((seg: any, segIdx: number) => {
+                  const left = ((seg.start - globalStart) / (globalEnd - globalStart)) * 100;
+                  const width = ((seg.end - seg.start) / (globalEnd - globalStart)) * 100;
+                  const colors = {'NOT_RUNNING': '#555', 'STARTING': '#ffdd99', 'RUNNING': '#90ee90', 'STOPPED': '#ff6666', 'FAILED': '#ff4444'};
+                  const color = (colors as any)[seg.state] || '#888';
+                  return (
+                    <div 
+                      key={`${dbName}-${segIdx}`}
+                      style={{ position: 'absolute', left: `${left}%`, width: `${width}%`, top: dbIdx * 3, height: 2, background: color, opacity: 0.6 }}
+                    />
+                  );
+                });
+              })}
+              {/* Process instances minimap */}
+              {Object.keys(allRowsBySid).map((sidKey, sidIdx) => {
+                const instances = allRowsBySid[sidKey];
+                return instances.map((inst, instIdx) => {
+                  const left = ((inst.start - globalStart) / (globalEnd - globalStart)) * 100;
+                  const width = ((inst.end - inst.start) / (globalEnd - globalStart)) * 100;
+                  const typeColor = instanceType(inst) === 'TE' ? '#6eb5ff' : instanceType(inst) === 'SM' ? '#ffa500' : '#9966ff';
+                  return (
+                    <div 
+                      key={`${sidKey}-${instIdx}`}
+                      style={{ position: 'absolute', left: `${left}%`, width: `${width}%`, top: 20 + (sidIdx % 35), height: 1, background: typeColor, opacity: 0.5 }}
+                    />
+                  );
+                });
+              })}
+            </div>
+            {/* Range selection overlay */}
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 60, pointerEvents: 'none' }}>
               <div 
-                style={{ position: 'absolute', left: `${((gStart - globalStart) / (globalEnd - globalStart)) * 100}%`, right: `${100 - ((gEnd - globalStart) / (globalEnd - globalStart)) * 100}%`, height: rangeBarHover ? '8px' : '100%', top: rangeBarHover ? '-2px' : 0, background: 'rgba(46, 204, 113, 0.4)', borderRadius: 2, cursor: 'grab', transition: 'height 0.15s ease, top 0.15s ease' }}
+                style={{ position: 'absolute', left: `${((gStart - globalStart) / (globalEnd - globalStart)) * 100}%`, right: `${100 - ((gEnd - globalStart) / (globalEnd - globalStart)) * 100}%`, height: '100%', background: 'rgba(46, 204, 113, 0.15)', border: '2px solid rgba(46, 204, 113, 0.6)', borderRadius: 4, pointerEvents: 'all', cursor: 'grab' }}
                 onMouseEnter={() => setRangeBarHover(true)}
                 onMouseLeave={() => setRangeBarHover(false)}
                 onMouseDown={(e: any) => { e.preventDefault(); setDragging('range'); setDragStartX(e.clientX); setDragStartRange({start: gStart, end: gEnd}); }}
               />
             </div>
+            {/* Handles */}
             <div
-              style={{ position: 'absolute', left: `${((gStart - globalStart) / (globalEnd - globalStart)) * 100}%`, top: 8, width: 12, height: 12, background: '#fff', border: '2px solid var(--accent)', borderRadius: '50%', cursor: 'ew-resize', zIndex: 2 }}
+              style={{ position: 'absolute', left: `${((gStart - globalStart) / (globalEnd - globalStart)) * 100}%`, top: 22, width: 16, height: 16, background: 'var(--range-handle-bg)', border: '3px solid var(--accent)', borderRadius: '50%', cursor: 'ew-resize', zIndex: 3, transform: 'translateX(-50%)' }}
               onMouseDown={(e) => { e.preventDefault(); setDragging('start'); }}
             />
             <div
-              style={{ position: 'absolute', left: `${((gEnd - globalStart) / (globalEnd - globalStart)) * 100}%`, top: 8, width: 12, height: 12, background: '#fff', border: '2px solid var(--accent)', borderRadius: '50%', cursor: 'ew-resize', zIndex: 2 }}
+              style={{ position: 'absolute', left: `${((gEnd - globalStart) / (globalEnd - globalStart)) * 100}%`, top: 22, width: 16, height: 16, background: 'var(--range-handle-bg)', border: '3px solid var(--accent)', borderRadius: '50%', cursor: 'ew-resize', zIndex: 3, transform: 'translateX(-50%)' }}
               onMouseDown={(e) => { e.preventDefault(); setDragging('end'); }}
             />
-            <div style={{ position: 'absolute', top: 24, left: 0, right: 0, fontSize: 11, color: '#7da3b8', textAlign: 'center' }}>
+            {/* Time labels */}
+            <div style={{ position: 'absolute', top: 62, left: 0, right: 0, fontSize: 11, color: 'var(--text-hint)', textAlign: 'center' }}>
               {new Date(gStart).toISOString()} → {new Date(gEnd).toISOString()}
             </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 12 }}>
-          <table className="table" style={{ flex: 1 }}>
-            <thead>
-              <tr>
-                <th onClick={() => toggleSort('sid')} style={{ cursor: 'pointer' }}>sid{sortKey === 'sid' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}</th>
-                <th onClick={() => toggleSort('type')} style={{ cursor: 'pointer' }}>Type{sortKey === 'type' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}</th>
-                <th onClick={() => toggleSort('address')} style={{ cursor: 'pointer' }}>Address{sortKey === 'address' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}</th>
-                <th onClick={() => toggleSort('start')} style={{ cursor: 'pointer' }}>Start{sortKey === 'start' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}</th>
-                <th onClick={() => toggleSort('end')} style={{ cursor: 'pointer' }}>End{sortKey === 'end' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}</th>
-              </tr>
-              <tr>
-                <th>
-                  <input value={filterSid} onChange={(e: any) => setFilterSid(e.target.value)} placeholder="sid" style={{ width: 70 }} />
-                </th>
-                <th>
-                  <select value={filterType} onChange={(e: any) => setFilterType(e.target.value)}>
-                    <option value="ALL">All</option>
-                    {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </th>
-                <th>
-                  <input list="addrOptions" value={filterAddr} onChange={(e: any) => setFilterAddr(e.target.value)} placeholder="search address" style={{ minWidth: 200 }} />
-                  <datalist id="addrOptions">
-                    {Array.from(new Set(instances.map(i => i.address).filter(Boolean) as string[])).sort().map(a => (
-                      <option key={a} value={a} />
-                    ))}
-                  </datalist>
-                </th>
-                <th colSpan={2}>
-                  <button onClick={() => { setFilterSid(''); setFilterType('ALL'); setFilterAddr(''); }} style={{ background: '#0b2b34', color: '#9fb4c9', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Reset filters</button>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* Unclassified events row */}
-              {unclassifiedEvents.length > 0 && (
-                <tr 
-                  key="unclassified" 
-                  onClick={() => { 
-                    setSelectedUnclassified(true);
-                    setSelectedSid(null);
-                    setSelectedDb(null);
-                    setPanelFocus('table');
-                    setFocusedEventIndex(0);
-                    setFocusedTimelineItem({type: 'unclassified', key: 'unclassified', index: 0});
-                  }} 
-                  style={{ cursor: 'pointer', background: selectedUnclassified ? 'rgba(43, 157, 244, 0.1)' : undefined }}
-                >
-                  <td style={{ color: '#9fb4c9' }}>—</td>
-                  <td style={{ color: '#9fb4c9' }}>Unclassified</td>
-                  <td colSpan={3} style={{ fontSize: 12, color: '#7da3b8' }}>{unclassifiedEvents.length} events not associated with any process or database</td>
-                </tr>
-              )}
-              {Object.keys(dbStates || {}).map((db, dbIdx) => (
-                <tr key={`db-${db}`} onClick={() => { setSelectedDb(db); setSelectedSid(null); setSelectedUnclassified(false); setFocusedRowIndex(dbIdx); setPanelFocus('table'); setFocusedEventIndex(0); setFocusedTimelineItem({type: 'db', key: db, index: 0}); }} style={{ cursor: 'pointer', background: selectedDb === db ? 'rgba(43, 157, 244, 0.1)' : undefined }}>
-                  <td style={{ color: '#9fb4c9' }}>—</td>
-                  <td style={{ color: '#9fb4c9' }}>Database</td>
-                  <td>{db}</td>
-                  <td colSpan={2} style={{ fontSize: 12, color: '#7da3b8' }}>Click to view state transitions</td>
-                </tr>
-              ))}
-              {visibleSorted.map((i, idx) => {
-                const rowIndex = Object.keys(dbStates || {}).length + idx;
-                
-                // Detect issues for this process
-                const hasFailureProtocol = failureProtocols.some(frp => frp.sid === i.sid);
-                const removeEvents = events.filter((e: any) => {
-                  const msg = e.message ?? '';
-                  const sidMatch = new RegExp(`\\bstartId=${i.sid}\\b`, 'i').test(msg);
-                  return sidMatch && /RemoveNodeCommand/.test(msg);
-                });
-                const hasNonGracefulRemoval = removeEvents.some(e => !/Gracefully shutdown engine/i.test(e.message ?? ''));
-                const hasAssert = removeEvents.some(e => {
-                  const reasonMatch = e.message?.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/);
-                  return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
-                });
-                
-                // Determine issue severity
-                const hasIssue = hasFailureProtocol || hasNonGracefulRemoval || hasAssert;
-                const isCritical = hasAssert || hasFailureProtocol;
-                
-                const rowStyle: any = {
-                  cursor: 'pointer',
-                  background: selectedSid === i.sid ? 'rgba(43, 157, 244, 0.1)' : undefined,
-                  borderLeft: hasIssue ? (isCritical ? '3px solid #ff0000' : '3px solid #ff8844') : undefined,
-                  boxShadow: hasIssue ? (isCritical ? '0 0 8px rgba(255, 0, 0, 0.3)' : '0 0 6px rgba(255, 136, 68, 0.2)') : undefined
-                };
-                
-                return (
-                <tr key={`row-${idx}`} onClick={() => { setSelectedSid(i.sid); setSelectedDb(null); setSelectedUnclassified(false); setFocusedRowIndex(rowIndex); setPanelFocus('table'); setFocusedEventIndex(0); setFocusedTimelineItem({type: 'sid', key: String(i.sid), index: 0}); }} style={rowStyle}>
-                  <td style={{ color: '#bfe7ff' }}>
-                    {i.sid}
-                    {hasAssert && <span style={{ marginLeft: 6, color: '#ff6666', fontSize: 11, fontWeight: 600 }} title="ASSERT detected">⚠</span>}
-                    {hasFailureProtocol && <span style={{ marginLeft: 6, color: '#ff4444', fontSize: 11, fontWeight: 600 }} title="Failure Protocol">⚠</span>}
-                  </td>
-                  <td>{instanceType(i)}</td>
-                  <td>{i.address ?? ''}</td>
-                  <td>{i.firstIso ?? new Date(i.start).toISOString()}</td>
-                  <td>{i.lastIso ?? new Date(i.end).toISOString()}</td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          {/* Side panel: show events for selected sid */}
-          <div style={{ width: 420, background: '#05131a', border: '1px solid #12303a', borderRadius: 6, padding: 8 }}>
+        {/* Log Panel: show events for selected sid, database, or unclassified */}
+        <div style={{ marginTop: 16, background: 'var(--bg-tertiary)', border: '1px solid var(--border-secondary)', borderRadius: 6, padding: 8 }}>
             {selectedSid === null && selectedDb === null && !selectedUnclassified ? (
-              <div style={{ color: '#7da3b8' }}>Click a row to see events</div>
+              <div style={{ color: 'var(--text-hint)' }}>Click a row to see events</div>
             ) : selectedUnclassified ? (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ fontWeight: 600 }}>Unclassified Events</div>
-                  <button onClick={() => setSelectedUnclassified(false)} style={{ background: '#0b2b34', color: '#9fb4c9', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
+                  <div style={{ fontWeight: 600 }}>Logs - Unclassified</div>
+                  <button onClick={() => setSelectedUnclassified(false)} style={{ background: 'var(--button-bg)', color: 'var(--text-muted)', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
                 </div>
                 {(function () {
                   if (unclassifiedEvents.length === 0) {
@@ -1156,7 +1573,7 @@ function StackApp(): JSX.Element {
                   
                   return (
                     <div style={{ marginBottom: 12, padding: '8px 0' }}>
-                      <div style={{ position: 'relative', height: 32, background: '#0a1e28', borderRadius: 4, padding: '0 10px' }}>
+                      <div style={{ position: 'relative', height: 32, background: 'var(--timeline-event-bg)', borderRadius: 4, padding: '0 10px' }}>
                         {/* Timeline line */}
                         <div style={{ position: 'absolute', left: 10, right: 10, top: '50%', height: 2, background: 'rgba(159, 180, 201, 0.3)', transform: 'translateY(-50%)' }} />
                         {/* Event diamonds */}
@@ -1208,8 +1625,8 @@ function StackApp(): JSX.Element {
                         background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : undefined 
                       }}
                     >
-                      <div style={{ fontSize: 12, color: '#9fb4c9' }}>{ev.iso}</div>
-                      <div style={{ fontSize: 13, color: '#e6eef6', whiteSpace: 'pre-wrap' }}>{(ev.raw ?? ev.message).replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, '')}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ev.iso}</div>
+                      <div style={{ fontSize: 13, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>{ev.raw ?? ev.message}</div>
                     </div>
                   ))}
                 </div>
@@ -1217,8 +1634,8 @@ function StackApp(): JSX.Element {
             ) : selectedDb !== null ? (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ fontWeight: 600 }}>Database state transitions: {selectedDb}</div>
-                  <button onClick={() => setSelectedDb(null)} style={{ background: '#0b2b34', color: '#9fb4c9', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
+                  <div style={{ fontWeight: 600 }}>Logs - Database {selectedDb}</div>
+                  <button onClick={() => setSelectedDb(null)} style={{ background: 'var(--button-bg)', color: 'var(--text-muted)', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
                 </div>
                 {(function () {
                   const dbStateEvents = dbStates[selectedDb] || [];
@@ -1234,7 +1651,6 @@ function StackApp(): JSX.Element {
                     ...dbStateEvents,
                     ...dbSpecificEvents.map(e => {
                       const fullLog = e.raw ?? e.message;
-                      const messageWithoutIso = fullLog.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, '');
                       // Determine the type/state label
                       const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(fullLog);
                       const state = isUpdateDbCmd ? 'UpdateDatabaseOptionsCommand' : 'Database Event';
@@ -1242,7 +1658,7 @@ function StackApp(): JSX.Element {
                         start: e.ts, 
                         iso: e.iso, 
                         state: state, 
-                        message: messageWithoutIso, 
+                        message: fullLog, 
                         isUpdate: isUpdateDbCmd
                       };
                     })
@@ -1259,7 +1675,7 @@ function StackApp(): JSX.Element {
                   
                   return (
                     <div style={{ marginBottom: 12, padding: '8px 0' }}>
-                      <div style={{ position: 'relative', height: 32, background: '#0a1e28', borderRadius: 4, padding: '0 10px' }}>
+                      <div style={{ position: 'relative', height: 32, background: 'var(--timeline-event-bg)', borderRadius: 4, padding: '0 10px' }}>
                         {/* Timeline line */}
                         <div style={{ position: 'absolute', left: 10, right: 10, top: '50%', height: 2, background: 'rgba(159, 180, 201, 0.3)', transform: 'translateY(-50%)' }} />
                         {/* Event diamonds */}
@@ -1310,10 +1726,18 @@ function StackApp(): JSX.Element {
                     });
                     
                     const allDbEvents = [
-                      ...dbStateEvents,
+                      ...dbStateEvents.map((seg: any) => {
+                        // Try to find matching event in databaseEvents to get dbDiff
+                        const matchingEvent = databaseEvents.find((e: any) => 
+                          e.iso === seg.iso && e.message === seg.message
+                        );
+                        return {
+                          ...seg,
+                          dbDiff: matchingEvent ? (matchingEvent as any).dbDiff : undefined
+                        };
+                      }),
                       ...dbSpecificEvents.map(e => {
                         const fullLog = e.raw ?? e.message;
-                        const messageWithoutIso = fullLog.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+\d{4}\s+/, '');
                         // Determine the type/state label
                         const isUpdateDbCmd = /UpdateDatabaseOptionsCommand/.test(fullLog);
                         const state = isUpdateDbCmd ? 'UpdateDatabaseOptionsCommand' : 'Database Event';
@@ -1321,37 +1745,77 @@ function StackApp(): JSX.Element {
                           start: e.ts, 
                           iso: e.iso, 
                           state: state, 
-                          message: messageWithoutIso, 
-                          isUpdate: isUpdateDbCmd
+                          message: fullLog, 
+                          isUpdate: isUpdateDbCmd,
+                          dbDiff: (e as any).dbDiff
                         };
                       })
                     ];
                     allDbEvents.sort((a, b) => a.start - b.start);
                     
-                    return allDbEvents.map((seg: any, idx) => (
-                      <div key={idx} className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`} onClick={() => { setFocusedEventIndex(idx); setPanelFocus('events'); }} style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.02)', cursor: 'pointer', background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : seg.isUpdate ? 'rgba(280, 60%, 60%, 0.05)' : undefined }}>
-                        <div style={{ fontSize: 12, color: '#9fb4c9' }}>{seg.iso}</div>
-                        <div style={{ fontSize: 13, color: seg.isUpdate ? '#c9a6ff' : '#e6eef6', fontWeight: 600 }}>{seg.state}</div>
-                        <div style={{ fontSize: 12, color: '#cfe6f7', whiteSpace: 'pre-wrap', marginTop: 2 }}>{seg.message}</div>
-                      </div>
-                    ));
+                    return allDbEvents.map((seg: any, idx) => {
+                      const isDbUpdate = /Updated database from DatabaseInfo/.test(seg.message);
+                      return (
+                        <div key={idx} className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`} onClick={() => { setFocusedEventIndex(idx); setPanelFocus('events'); }} style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.02)', cursor: 'pointer', background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : seg.isUpdate ? 'rgba(280, 60%, 60%, 0.05)' : undefined }}>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{seg.iso}</div>
+                          <div style={{ fontSize: 13, color: seg.isUpdate ? '#c9a6ff' : 'var(--text-primary)', fontWeight: 600 }}>{seg.state}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', marginTop: 2 }}>{seg.message}</div>
+                          {isDbUpdate && seg.dbDiff && (() => {
+                            const changedKeys = Object.keys({...seg.dbDiff.from, ...seg.dbDiff.to}).filter((key: string) => {
+                              return seg.dbDiff.from[key] !== seg.dbDiff.to[key];
+                            });
+                            
+                            if (changedKeys.length === 0) {
+                              return (
+                                <div style={{ marginTop: 6, background: 'rgba(100, 100, 100, 0.15)', padding: '6px 8px', borderRadius: 4, borderLeft: '3px solid rgba(150, 150, 150, 0.4)' }}>
+                                  <div style={{ fontSize: 11, color: 'var(--text-hint)', fontStyle: 'italic' }}>No changes detected in database fields</div>
+                                </div>
+                              );
+                            }
+                            
+                            return (
+                              <div style={{ marginTop: 6, background: 'rgba(43, 157, 244, 0.08)', padding: '6px 8px', borderRadius: 4, borderLeft: '3px solid rgba(43, 157, 244, 0.4)' }}>
+                                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-hint)', marginBottom: 4 }}>CHANGES:</div>
+                                {Object.keys({...seg.dbDiff.from, ...seg.dbDiff.to}).map((key: string) => {
+                                  const fromVal = seg.dbDiff.from[key];
+                                  const toVal = seg.dbDiff.to[key];
+                                  const changed = fromVal !== toVal;
+                                  if (!changed) return null;
+                                  return (
+                                    <div key={key} style={{ marginLeft: 8, fontSize: 11, marginTop: 2 }}>
+                                      <span style={{ color: 'var(--text-hint)' }}>{key}=</span>
+                                      {fromVal && <span style={{ background: 'rgba(255, 80, 80, 0.2)', color: '#ffb3b3', padding: '1px 3px', borderRadius: 2, textDecoration: 'line-through' }}>{fromVal}</span>}
+                                      {fromVal && toVal && <span style={{ color: 'var(--text-hint)', margin: '0 4px' }}>→</span>}
+                                      {toVal && <span style={{ background: 'rgba(80, 255, 120, 0.2)', color: '#90ee90', padding: '1px 3px', borderRadius: 2 }}>{toVal}</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    });
                   })()}
                 </div>
               </div>
             ) : (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ fontWeight: 600 }}>Events for sid {selectedSid}</div>
-                  <button onClick={() => setSelectedSid(null)} style={{ background: '#0b2b34', color: '#9fb4c9', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
+                  <div style={{ fontWeight: 600 }}>Logs - sid {selectedSid}</div>
+                  <button onClick={() => setSelectedSid(null)} style={{ background: 'var(--button-bg)', color: 'var(--text-muted)', border: 'none', padding: '6px 8px', borderRadius: 4, cursor: 'pointer' }}>Close</button>
                 </div>
                 {(function () {
                   // Build event list first to get timestamps
-                  const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, 'i');
                   const instsForSid = rowsBySid[String(selectedSid)] || [];
                   const related = events.filter((e: any) => {
-                    const raw = e.raw ?? '';
-                    const msg = e.message ?? '';
-                    return sidRe.test(raw) || sidRe.test(msg);
+                    // Exact match for events with a startId
+                    if (e.sid === selectedSid) return true;
+                    // Include events without a startId if they fall within the process's lifetime
+                    if (e.sid === null && instsForSid.length > 0) {
+                      return instsForSid.some(inst => e.ts >= inst.start && e.ts <= inst.end);
+                    }
+                    return false;
                   });
                   related.sort((a, b) => a.ts - b.ts);
                   const frpForSid = failureProtocols.filter(frp => frp.sid === selectedSid);
@@ -1368,7 +1832,7 @@ function StackApp(): JSX.Element {
                   
                   return (
                     <div style={{ marginBottom: 12, padding: '8px 0' }}>
-                      <div style={{ position: 'relative', height: 32, background: '#0a1e28', borderRadius: 4, padding: '0 10px' }}>
+                      <div style={{ position: 'relative', height: 32, background: 'var(--timeline-event-bg)', borderRadius: 4, padding: '0 10px' }}>
                         {/* Timeline line */}
                         <div style={{ position: 'absolute', left: 10, right: 10, top: '50%', height: 2, background: 'rgba(159, 180, 201, 0.3)', transform: 'translateY(-50%)' }} />
                         {/* Event diamonds */}
@@ -1409,21 +1873,31 @@ function StackApp(): JSX.Element {
                 })()}
                 <div style={{ maxHeight: 480, overflow: 'auto' }}>
                   {(function () {
-                    // Match only exact sid values - not as part of larger numbers or in arrays
-                    const sidRe = new RegExp(`\\b(?:startIds?|start-id|sid)[:=]\\s*${selectedSid}\\b(?!\\d)`, 'i');
                     const instsForSid = rowsBySid[String(selectedSid)] || [];
                     const adminProcs = Array.from(new Set(instsForSid.map(i => i.process)));
                     const intervals = instsForSid.map(i => ({ start: i.start, end: i.end }));
                     const related = events.filter((e: any) => {
-                      const raw = e.raw ?? '';
-                      const msg = e.message ?? '';
-                      // ONLY match explicit mention of this exact sid
-                      return sidRe.test(raw) || sidRe.test(msg);
+                      // Exact match for events with a startId
+                      if (e.sid === selectedSid) return true;
+                      // Include events without a startId if they fall within the process's lifetime
+                      // BUT exclude database events (they belong in the database panel, not process panels)
+                      if (e.sid === null && instsForSid.length > 0) {
+                        const msg = e.message ?? '';
+                        const raw = e.raw ?? '';
+                        // Check for database-specific patterns
+                        const isDatabaseEvent = 
+                          /\bdbName[:=]/.test(msg) || /\bdbName[:=]/.test(raw) ||
+                          /Database incarnation change/.test(msg) || /Database incarnation change/.test(raw) ||
+                          /Updated database from DatabaseInfo/.test(msg) || /Updated database from DatabaseInfo/.test(raw);
+                        if (isDatabaseEvent) return false;
+                        return instsForSid.some(inst => e.ts >= inst.start && e.ts <= inst.end);
+                      }
+                      return false;
                     });
                     related.sort((a, b) => a.ts - b.ts);
                     // Add failure protocol events for this sid
                     const frpForSid = failureProtocols.filter(frp => frp.sid === selectedSid);
-                    const allEvents = [...related.map(ev => ({ type: 'event', ts: ev.ts, iso: ev.iso, message: ev.message, fileSource: ev.fileSource })), ...frpForSid.map(frp => ({ type: 'frp', ts: frp.ts, iso: frp.iso, message: frp.raw.replace(/^\S+\s+/, ''), fileSource: undefined as string | undefined }))];
+                    const allEvents = [...related.map(ev => ({ type: 'event', ts: ev.ts, iso: ev.iso, message: ev.message, raw: ev.raw, fileSource: ev.fileSource, dbDiff: (ev as any).dbDiff })), ...frpForSid.map(frp => ({ type: 'frp', ts: frp.ts, iso: frp.iso, message: frp.raw, raw: frp.raw, fileSource: undefined as string | undefined, dbDiff: undefined }))];
                     allEvents.sort((a, b) => a.ts - b.ts);
                     
                     // Track file changes for separators
@@ -1434,32 +1908,101 @@ function StackApp(): JSX.Element {
                       // Add file separator if file source changed
                       if (loadedServer && ev.fileSource && ev.fileSource !== lastFileSource) {
                         elements.push(
-                          <div key={`file-sep-${idx}`} style={{ padding: '8px', background: 'rgba(43, 157, 244, 0.08)', borderTop: '2px solid rgba(43, 157, 244, 0.3)', borderBottom: '2px solid rgba(43, 157, 244, 0.3)', margin: '4px 0', fontSize: 12, color: '#7da3b8', fontWeight: 600, textAlign: 'center' }}>
+                          <div key={`file-sep-${idx}`} style={{ padding: '8px', background: 'rgba(43, 157, 244, 0.08)', borderTop: '2px solid rgba(43, 157, 244, 0.3)', borderBottom: '2px solid rgba(43, 157, 244, 0.3)', margin: '4px 0', fontSize: 12, color: 'var(--text-hint)', fontWeight: 600, textAlign: 'center' }}>
                             📄 {ev.fileSource}
                           </div>
                         );
                         lastFileSource = ev.fileSource;
                       }
                       
+                      // Parse the raw log to extract components for highlighting
+                      const rawLog = (ev as any).raw || ev.message;
+                      const logMatch = rawLog.match(/^(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+(\S+)\s+(.*)$/);
+                      let logLevel = '';
+                      let threadInfo = '';
+                      let loggerName = '';
+                      let logMessage = ev.message;
+                      
+                      if (logMatch) {
+                        // logMatch[1] = timestamp (already displayed separately)
+                        logLevel = logMatch[2]; // INFO, WARN, ERROR, etc.
+                        threadInfo = logMatch[3]; // thread/process info
+                        loggerName = logMatch[4]; // DomainProcessStateMachine, etc.
+                        logMessage = logMatch[5]; // the actual message
+                      }
+                      
                       // Check if this is a RemoveNodeCommand event and extract the reason
-                      const isRemoveNode = /RemoveNodeCommand/.test(ev.message);
-                      const reasonMatch = isRemoveNode ? ev.message.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
+                      const isRemoveNode = /RemoveNodeCommand/.test(logMessage);
+                      const reasonMatch = isRemoveNode ? logMessage.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
                       const isGraceful = reasonMatch && /Gracefully shutdown engine/i.test(reasonMatch[0]);
                       const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
                       
+                      // Check if this is a database update event with diff
+                      const isDbUpdate = /Updated database from DatabaseInfo/.test(logMessage);
+                      const dbDiff = (ev as any).dbDiff;
+                      if (isDbUpdate && logMessage.includes('ENOVIA')) {
+                        console.log('Frontend dbDiff for ENOVIA:', dbDiff);
+                      }
+                      
                       elements.push(
                         <div key={idx} className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`} onClick={() => { setFocusedEventIndex(idx); setPanelFocus('events'); }} style={{ padding: '6px 8px', borderBottom: '1px solid rgba(255,255,255,0.02)', cursor: 'pointer', background: panelFocus === 'events' && focusedEventIndex === idx ? 'rgba(43, 157, 244, 0.15)' : ev.type === 'frp' ? 'rgba(255, 80, 80, 0.05)' : undefined }}>
-                          <div style={{ fontSize: 12, color: '#9fb4c9' }}>{ev.iso}</div>
-                          <div style={{ fontSize: 13, color: ev.type === 'frp' ? '#ffb3b3' : '#e6eef6', whiteSpace: 'pre-wrap' }}>
-                            {isRemoveNode && reasonMatch ? (
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ev.iso}</div>
+                          <div style={{ fontSize: 13, color: ev.type === 'frp' ? '#ffb3b3' : 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                            {logLevel && (
+                              <span style={{ color: logLevel === 'ERROR' ? '#ff6666' : logLevel === 'WARN' ? '#ffdd99' : 'var(--text-hint)', fontWeight: 600, marginRight: 6 }}>{logLevel}</span>
+                            )}
+                            {threadInfo && (
+                              <span style={{ color: 'var(--text-hint)', fontSize: 12, marginRight: 6 }}>[{threadInfo}]</span>
+                            )}
+                            {loggerName && (
+                              <span style={{ color: 'var(--text-hint)', marginRight: 6 }}>{loggerName}</span>
+                            )}
+                            {isDbUpdate && dbDiff ? (
+                              <div>
+                                <div style={{ marginBottom: 6 }}>{logMessage}</div>
+                                {(() => {
+                                  const changedKeys = Object.keys({...dbDiff.from, ...dbDiff.to}).filter(key => {
+                                    return dbDiff.from[key] !== dbDiff.to[key];
+                                  });
+                                  
+                                  if (changedKeys.length === 0) {
+                                    return (
+                                      <div style={{ background: 'rgba(100, 100, 100, 0.15)', padding: '6px 8px', borderRadius: 4, borderLeft: '3px solid rgba(150, 150, 150, 0.4)' }}>
+                                        <div style={{ fontSize: 11, color: 'var(--text-hint)', fontStyle: 'italic' }}>No changes detected in database fields</div>
+                                      </div>
+                                    );
+                                  }
+                                  
+                                  return (
+                                    <div style={{ background: 'rgba(43, 157, 244, 0.08)', padding: '6px 8px', borderRadius: 4, borderLeft: '3px solid rgba(43, 157, 244, 0.4)' }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-hint)', marginBottom: 4 }}>CHANGES:</div>
+                                      {Object.keys({...dbDiff.from, ...dbDiff.to}).map(key => {
+                                        const fromVal = dbDiff.from[key];
+                                        const toVal = dbDiff.to[key];
+                                        const changed = fromVal !== toVal;
+                                        if (!changed) return null;
+                                        return (
+                                          <div key={key} style={{ marginLeft: 8, fontSize: 11, marginTop: 2 }}>
+                                            <span style={{ color: 'var(--text-hint)' }}>{key}=</span>
+                                            {fromVal && <span style={{ background: 'rgba(255, 80, 80, 0.2)', color: '#ffb3b3', padding: '1px 3px', borderRadius: 2, textDecoration: 'line-through' }}>{fromVal}</span>}
+                                            {fromVal && toVal && <span style={{ color: 'var(--text-hint)', margin: '0 4px' }}>→</span>}
+                                            {toVal && <span style={{ background: 'rgba(80, 255, 120, 0.2)', color: '#90ee90', padding: '1px 3px', borderRadius: 2 }}>{toVal}</span>}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ) : isRemoveNode && reasonMatch ? (
                               <>
-                                {ev.message.substring(0, reasonMatch.index)}
+                                {logMessage.substring(0, reasonMatch.index)}
                                 <span style={{ background: hasAssert ? 'rgba(255, 0, 0, 0.3)' : isGraceful ? 'rgba(255, 200, 100, 0.2)' : 'rgba(255, 80, 80, 0.2)', color: hasAssert ? '#ff6666' : isGraceful ? '#ffdd99' : '#ffb3b3', padding: '2px 4px', borderRadius: 3, fontWeight: 600, boxShadow: hasAssert ? '0 0 4px rgba(255, 0, 0, 0.4)' : 'none' }}>
                                   {reasonMatch[0]}
                                 </span>
-                                {ev.message.substring(reasonMatch.index! + reasonMatch[0].length)}
+                                {logMessage.substring(reasonMatch.index! + reasonMatch[0].length)}
                               </>
-                            ) : ev.message}
+                            ) : logMessage}
                           </div>
                         </div>
                       );
@@ -1471,9 +2014,9 @@ function StackApp(): JSX.Element {
                 </div>
               </div>
             )}
-          </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
