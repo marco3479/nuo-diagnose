@@ -19373,3 +19373,6 @@ function stateColor(state) {
 assert(document);
 var root = import_client.createRoot(document.getElementById("root"));
 root.render(/* @__PURE__ */ jsx_dev_runtime.jsxDEV(StackApp, {}, undefined, false, undefined, this));
+
+//# debugId=E4DA2F5A1BBFF41564756E2164756E21
+//# sourceMappingURL=app.js.map
