@@ -15,6 +15,7 @@ import {
 } from './parsers';
 import { buildInstances } from './instance-builder';
 import { buildDbStates } from './db-state';
+import { buildInferredDomainStates } from './domain-state-builder';
 
 const DEFAULT_LOG = 'tests/mock/nuoadmin.log';
 
@@ -166,6 +167,14 @@ export async function handleLoadDiagnose(request: any): Promise<Response> {
 		const first = events[0];
 		const last = events[events.length - 1];
 
+		// Build inferred domain states
+		const inferredDomainStates = buildInferredDomainStates(
+			events,
+			instances,
+			first?.ts ?? 0,
+			last?.ts ?? Date.now()
+		);
+
 		return new Response(
 			JSON.stringify(
 				{
@@ -174,6 +183,7 @@ export async function handleLoadDiagnose(request: any): Promise<Response> {
 					instances,
 					dbStates,
 					failureProtocols,
+					inferredDomainStates,
 					range: { start: first?.ts ?? null, end: last?.ts ?? null },
 					server,
 					multiFile: true,

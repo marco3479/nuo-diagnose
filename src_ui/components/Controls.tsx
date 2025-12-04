@@ -17,6 +17,8 @@ type ControlsProps = {
   diagnosePackages: string[];
   theme: 'dark' | 'light';
   setTheme: (theme: 'dark' | 'light') => void;
+  domainStatePanelOpen: boolean;
+  setDomainStatePanelOpen: (open: boolean) => void;
 };
 
 export function Controls({
@@ -34,6 +36,8 @@ export function Controls({
   diagnosePackages,
   theme,
   setTheme,
+  domainStatePanelOpen,
+  setDomainStatePanelOpen,
 }: ControlsProps): JSX.Element {
   return (
     <div className="controls">
@@ -118,9 +122,20 @@ export function Controls({
         )}
 
         <button
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onClick={() => setDomainStatePanelOpen(!domainStatePanelOpen)}
           style={{
             marginLeft: 'auto',
+            fontSize: 13,
+            padding: '6px 12px',
+            fontWeight: 500,
+          }}
+          title="Toggle Domain State panel"
+        >
+          {domainStatePanelOpen ? 'Hide' : 'Show'} Domain State
+        </button>
+        <button
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          style={{
             justifySelf: 'flex-end',
             fontSize: 16,
           }}

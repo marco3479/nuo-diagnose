@@ -11,6 +11,9 @@ type RangeSliderProps = {
   setDragStartRange: (range: { start: number; end: number }) => void;
   allRowsBySid: Record<string, any[]>;
   dbStates: Record<string, any[]>;
+  events: any[];
+  addresses: string[];
+  groupsByAddress: Record<string, string[]>;
 };
 
 export function RangeSlider({
@@ -26,6 +29,9 @@ export function RangeSlider({
   setDragStartRange,
   allRowsBySid,
   dbStates,
+  events,
+  addresses,
+  groupsByAddress,
 }: RangeSliderProps): JSX.Element {
   const gStart = rangeStart ?? globalStart;
   const gEnd = rangeEnd ?? globalEnd;
@@ -74,28 +80,87 @@ export function RangeSlider({
             });
           })}
           {/* Process instances minimap */}
-          {Object.keys(allRowsBySid).map((sidKey, sidIdx) => {
-            const instances = allRowsBySid[sidKey];
-            return instances.map((inst, instIdx) => {
-              const left =
-                ((inst.start - globalStart) / (globalEnd - globalStart)) * 100;
-              const width =
-                (((inst.end ?? inst.start) - inst.start) /
-                  (globalEnd - globalStart)) *
-                100;
-              return (
-                <div
-                  key={`minimap-inst-${sidKey}-${instIdx}`}
-                  style={{
-                    position: 'absolute',
-                    left: `${left}%`,
-                    width: `${Math.max(width, 0.5)}%`,
-                    top: 10 + sidIdx * 2,
-                    height: 2,
-                    background: 'hsla(42, 60%, 50%, 0.4)',
-                  }}
-                />
+          {addresses.flatMap((addr, addrIdx) => {
+            const sids = groupsByAddress[addr] || [];
+            return sids.flatMap((sid, sidIdxInAddr) => {
+              const instances = allRowsBySid[sid] || [];
+              // Calculate the global index for vertical positioning
+              const sidsBefore = addresses.slice(0, addrIdx).reduce(
+                (count, a) => count + (groupsByAddress[a] || []).length,
+                0
               );
+              const globalSidIdx = sidsBefore + sidIdxInAddr;
+              
+              return instances.map((inst, instIdx) => {
+                // Check if there are any RemoveNodeCommand events for this instance
+                const removeEvents = events.filter(
+                  (e: any) =>
+                    e.sid === inst.sid && /RemoveNodeCommand/.test(e.message ?? '')
+                );
+                // If no remove command, extend to globalEnd (like the main timeline)
+                const effectiveEnd = removeEvents.length > 0 ? inst.end : globalEnd;
+                
+                const left =
+                  ((inst.start - globalStart) / (globalEnd - globalStart)) * 100;
+                const width =
+                  ((effectiveEnd - inst.start) / (globalEnd - globalStart)) * 100;
+                return (
+                  <div
+                    key={`minimap-inst-${sid}-${instIdx}`}
+                    style={{
+                      position: 'absolute',
+                      left: `${left}%`,
+                      width: `${Math.max(width, 0.5)}%`,
+                      top: 10 + globalSidIdx * 2,
+                      height: 2,
+                      background: 'hsla(42, 60%, 50%, 0.4)',
+                    }}
+                  />
+                );
+              });
+            });
+          })}
+          {/* ASSERT markers minimap */}
+          {addresses.flatMap((addr, addrIdx) => {
+            const sids = groupsByAddress[addr] || [];
+            return sids.flatMap((sid, sidIdxInAddr) => {
+              // Calculate the global index for vertical positioning
+              const sidsBefore = addresses.slice(0, addrIdx).reduce(
+                (count, a) => count + (groupsByAddress[a] || []).length,
+                0
+              );
+              const globalSidIdx = sidsBefore + sidIdxInAddr;
+              
+              // Find ASSERT events for this sid
+              const assertEvents = events.filter((e: any) => {
+                if (e.sid !== Number(sid)) return false;
+                if (!/RemoveNodeCommand/.test(e.message ?? '')) return false;
+                const reasonMatch = e.message?.match(
+                  /reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/
+                );
+                return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+              });
+              
+              return assertEvents.map((assertEvent, idx) => {
+                const left =
+                  ((assertEvent.ts - globalStart) / (globalEnd - globalStart)) * 100;
+                return (
+                  <div
+                    key={`minimap-assert-${sid}-${idx}`}
+                    style={{
+                      position: 'absolute',
+                      left: `${left}%`,
+                      width: 2,
+                      top: 10 + globalSidIdx * 2,
+                      height: 2,
+                      background: 'hsla(0, 100%, 40%, 1)',
+                      transform: 'rotate(45deg)',
+                      zIndex: 5,
+                      boxShadow: '0 0 3px 1px rgba(255, 0, 0, 0.9), 0 0 6px 2px rgba(255, 0, 0, 0.5)',
+                    }}
+                  />
+                );
+              });
             });
           })}
         </div>

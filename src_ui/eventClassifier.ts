@@ -27,27 +27,21 @@ export function classifyEvents(
       continue;
     }
 
-    // Check if it's a database event
-    // 1. Has dbName parameter
+    // All DomainProcessStateMachine events without sid are AP events
+    const isDomainProcessStateMachine =
+      /DomainProcessStateMachine/.test(msg) ||
+      /DomainProcessStateMachine/.test(raw);
+    if (isDomainProcessStateMachine) {
+      processEvents.push(e);
+      continue;
+    }
+
+    // Check if it's a database event - has dbName parameter
     const hasDatabaseName =
       /\bdbName[:=]/.test(msg) || /\bdbName[:=]/.test(raw);
     if (hasDatabaseName) {
       databaseEvents.push(e);
       continue;
-    }
-
-    // 2. DomainProcessStateMachine events that mention any known database name
-    const isDomainProcessStateMachine =
-      /DomainProcessStateMachine/.test(msg) ||
-      /DomainProcessStateMachine/.test(raw);
-    if (isDomainProcessStateMachine) {
-      const mentionsAnyDb = Object.keys(dbStates || {}).some(
-        (db) => msg.includes(db) || raw.includes(db)
-      );
-      if (mentionsAnyDb) {
-        databaseEvents.push(e);
-        continue;
-      }
     }
 
     // Everything else is unclassified

@@ -5,6 +5,7 @@ import type {
   DbStates,
   FailureProtocol,
   EventType,
+  DomainStateSnapshot,
 } from './types';
 
 declare const fetch: any;
@@ -76,6 +77,7 @@ type LoadDataResult = {
   range: { start: number; end: number } | null;
   server?: string;
   error?: string;
+  inferredDomainStates?: DomainStateSnapshot[];
 };
 
 export async function loadFromFile(path: string): Promise<LoadDataResult> {
@@ -142,6 +144,7 @@ export async function loadFromNuoSupport(
     failureProtocols: json.failureProtocols || [],
     range: json.range || null,
     server: json.server || server,
+    inferredDomainStates: json.inferredDomainStates || [],
   };
 }
 
@@ -218,6 +221,33 @@ export async function loadServerTimeRanges(
     } else {
       console.error('Failed to load server time ranges:', e);
     }
+    return [];
+  }
+}
+
+export async function loadDomainStates(
+  ticket: string,
+  packageName: string
+): Promise<DomainStateSnapshot[]> {
+  try {
+    const res = await fetch(
+      `/domain-states?ticket=${encodeURIComponent(ticket)}&package=${encodeURIComponent(packageName)}`
+    );
+    const json = await res.json();
+
+    if (json.error) {
+      console.error('Domain states error:', json.error);
+      return [];
+    }
+
+    if (json.domainStates) {
+      console.log(`Loaded ${json.domainStates.length} domain states`);
+      return json.domainStates;
+    }
+
+    return [];
+  } catch (e) {
+    console.error('Failed to load domain states:', e);
     return [];
   }
 }

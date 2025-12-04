@@ -12,6 +12,7 @@ import type {
   TableRow,
   SortKey,
   SortDir,
+  DomainStateSnapshot,
 } from './types';
 import {
   stateColor,
@@ -31,6 +32,7 @@ import {
   loadFromNuoSupport,
   loadDiagnosePackages,
   loadServerTimeRanges,
+  loadDomainStates,
 } from './hooks';
 import { classifyEvents } from './eventClassifier';
 import {
@@ -41,9 +43,12 @@ import {
   Tooltip,
   LoadingSpinner,
   DatabaseTimeline,
+  ApTimeline,
   UnclassifiedEventsRow,
   ProcessTimeline,
   LogPanel,
+  TimePointSlider,
+  DomainStatePanel,
 } from './components';
 
 declare const fetch: any;
@@ -67,6 +72,7 @@ function StackApp(): JSX.Element {
   const [failureProtocols, setFailureProtocols] = useState<FailureProtocol[]>([]);
   const [selectedSid, setSelectedSid] = useState<number | null>(null);
   const [selectedDb, setSelectedDb] = useState<string | null>(null);
+  const [selectedAp, setSelectedAp] = useState<string | null>(null);
   const [selectedUnclassified, setSelectedUnclassified] = useState<boolean>(false);
   const [rangeStart, setRangeStart] = useState<number | null>(null);
   const [rangeEnd, setRangeEnd] = useState<number | null>(null);
@@ -92,6 +98,11 @@ function StackApp(): JSX.Element {
   const [apsCollapsed, setApsCollapsed] = useState(false);
   const [serverDropdownOpen, setServerDropdownOpen] = useState(false);
   const [sidDropdownOpen, setSidDropdownOpen] = useState(false);
+  const [domainStates, setDomainStates] = useState<DomainStateSnapshot[]>([]);
+  const [currentTimePoint, setCurrentTimePoint] = useState<number | null>(null);
+  const [domainPanelOpen, setDomainPanelOpen] = useState(true);
+  const [domainPanelWidth, setDomainPanelWidth] = useState(600);
+  const [isResizing, setIsResizing] = useState(false);
 
   // Use custom hooks
   const { theme, setTheme } = useTheme('dark');
@@ -100,6 +111,39 @@ function StackApp(): JSX.Element {
   
   useDropdownOutsideClick(serverDropdownOpen, sidDropdownOpen, setServerDropdownOpen, setSidDropdownOpen);
   useUrlNavigation(loadMode);
+
+  // Handle panel resize
+  useEffect(() => {
+    if (!isResizing) return;
+
+    // Prevent text selection during resize
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const windowWidth = window.innerWidth;
+      const newWidth = windowWidth - e.clientX;
+      // Clamp width between 300px and 800px
+      const clampedWidth = Math.max(300, Math.min(800, newWidth));
+      setDomainPanelWidth(clampedWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, [isResizing]);
 
   async function load(p = path) {
     setLoading(true);
@@ -149,6 +193,18 @@ function StackApp(): JSX.Element {
       setFailureProtocols(data.failureProtocols);
       setLoadedServer(data.server || selectedServer);
       
+      // Merge inferred domain states with loaded reference states
+      if (data.inferredDomainStates && data.inferredDomainStates.length > 0) {
+        // Merge with already loaded domain states from show-domain.txt
+        const mergedStates = mergeDomainStates(domainStates, data.inferredDomainStates);
+        setDomainStates(mergedStates);
+        
+        // Set initial timepoint
+        if (mergedStates.length > 0 && mergedStates[0]) {
+          setCurrentTimePoint(mergedStates[0].timestamp);
+        }
+      }
+      
       if (data.range && data.range.start && data.range.end) {
         setGlobalStart(data.range.start);
         setGlobalEnd(data.range.end);
@@ -168,6 +224,31 @@ function StackApp(): JSX.Element {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Merge reference states from show-domain.txt with inferred states
+  function mergeDomainStates(
+    referenceStates: DomainStateSnapshot[],
+    inferredStates: DomainStateSnapshot[]
+  ): DomainStateSnapshot[] {
+    // Use inferred states as the base timeline
+    const merged = [...inferredStates];
+    
+    // Inject reference states and mark them
+    for (const refState of referenceStates) {
+      merged.push({
+        ...refState,
+        state: {
+          ...refState.state,
+          serverVersion: refState.state.serverVersion + ' (reference)',
+        },
+      });
+    }
+    
+    // Sort by timestamp
+    merged.sort((a, b) => a.timestamp - b.timestamp);
+    
+    return merged;
   }
 
   // Parse URL parameters like /nuosupport/zd12345/diagnose-20231201/server01
@@ -218,7 +299,7 @@ function StackApp(): JSX.Element {
         if (initialPkg && packages.includes(initialPkg)) {
           setSelectedPackage(initialPkg);
           delete (window as any).__initialPackage;
-        } else if (packages.length > 0) {
+        } else if (packages.length > 0 && packages[0]) {
           setSelectedPackage(packages[0]);
         }
       })
@@ -231,6 +312,7 @@ function StackApp(): JSX.Element {
       setServers([]);
       setSelectedServer('');
       setServerTimeRanges([]);
+      setDomainStates([]);
       return;
     }
     
@@ -246,12 +328,23 @@ function StackApp(): JSX.Element {
     setSelectedServer('');
     setServers([]);
     setServerTimeRanges([]);
+    setDomainStates([]);
     setLoading(true);
     
-    loadServerTimeRanges(selectedTicket, selectedPackage)
-      .then((serverRanges) => {
+    Promise.all([
+      loadServerTimeRanges(selectedTicket, selectedPackage),
+      loadDomainStates(selectedTicket, selectedPackage),
+    ])
+      .then(([serverRanges, domainStateSnapshots]) => {
         setLoading(false);
         setServerTimeRanges(serverRanges);
+        setDomainStates(domainStateSnapshots);
+        
+        // Set initial timepoint to first state if available
+        if (domainStateSnapshots.length > 0 && domainStateSnapshots[0]) {
+          setCurrentTimePoint(domainStateSnapshots[0].timestamp);
+        }
+        
         const servers = serverRanges.map((r: ServerTimeRange) => r.server);
         setServers(servers);
         
@@ -259,7 +352,7 @@ function StackApp(): JSX.Element {
         if (initialServer && servers.includes(initialServer)) {
           setSelectedServer(initialServer);
           delete (window as any).__initialServer;
-        } else if (servers.length > 0) {
+        } else if (servers.length > 0 && servers[0]) {
           setSelectedServer(servers[0]);
         }
       })
@@ -277,6 +370,56 @@ function StackApp(): JSX.Element {
       loadFromNuoSupportHandler();
     }
   }, [selectedServer]);
+
+  // Domain state navigation functions
+  const handleNextState = () => {
+    if (domainStates.length === 0) return;
+    if (!currentTimePoint) {
+      setCurrentTimePoint(domainStates[0]?.timestamp || gStart);
+      return;
+    }
+    // Find next state after current time
+    const nextState = domainStates.find(ds => ds.timestamp > currentTimePoint);
+    if (nextState) setCurrentTimePoint(nextState.timestamp);
+  };
+
+  const handlePrevState = () => {
+    if (domainStates.length === 0) return;
+    if (!currentTimePoint) {
+      setCurrentTimePoint(domainStates[domainStates.length - 1]?.timestamp || gStart);
+      return;
+    }
+    // Find previous state before current time
+    const prevStates = domainStates.filter(ds => ds.timestamp < currentTimePoint);
+    if (prevStates.length > 0) {
+      const prevState = prevStates[prevStates.length - 1];
+      if (prevState) setCurrentTimePoint(prevState.timestamp);
+    }
+  };
+
+  // Get current domain state based on timepoint - find the most recent state at or before the timepoint
+  const currentDomainStateSnapshot = React.useMemo(() => {
+    if (!currentTimePoint || domainStates.length === 0) return null;
+    
+    // Find all states at or before the current timepoint
+    const statesBeforeOrAt = domainStates.filter(ds => ds.timestamp <= currentTimePoint);
+    if (statesBeforeOrAt.length === 0) return null;
+    
+    // Return the most recent one
+    return statesBeforeOrAt[statesBeforeOrAt.length - 1] || null;
+  }, [currentTimePoint, domainStates]);
+
+  const currentDomainState = currentDomainStateSnapshot?.state || null;
+
+  // Get previous domain state for change detection
+  const previousDomainStateSnapshot = React.useMemo(() => {
+    if (!currentDomainStateSnapshot || domainStates.length === 0) return null;
+    
+    const currentIndex = domainStates.findIndex(ds => ds.timestamp === currentDomainStateSnapshot.timestamp);
+    if (currentIndex <= 0) return null;
+    
+    return domainStates[currentIndex - 1] || null;
+  }, [currentDomainStateSnapshot, domainStates]);
 
   const span = Math.max(1, (rangeEnd ?? globalEnd) - (rangeStart ?? globalStart));
   const gStart = rangeStart ?? globalStart;
@@ -337,9 +480,13 @@ function StackApp(): JSX.Element {
     else { setSortKey(key); setSortDir('asc'); }
   };
 
-  // Group sids by address
+  // Group sids by address (for filtered/visible timeline)
   const groupsByAddress = groupInstancesByAddress(rowsBySid);
   const addresses = sortAddressesByEarliestStart(groupsByAddress, rowsBySid);
+
+  // Group all sids by address (for minimap - always show all processes)
+  const allGroupsByAddress = groupInstancesByAddress(allRowsBySid);
+  const allAddresses = sortAddressesByEarliestStart(allGroupsByAddress, allRowsBySid);
 
   // Handle dragging for range slider
   useEffect(() => {
@@ -604,6 +751,8 @@ function StackApp(): JSX.Element {
         diagnosePackages={diagnosePackages}
         theme={theme}
         setTheme={setTheme}
+        domainStatePanelOpen={domainPanelOpen}
+        setDomainStatePanelOpen={setDomainPanelOpen}
       />
 
       <ServerTimeline
@@ -622,108 +771,181 @@ function StackApp(): JSX.Element {
 
       {/* Main content - hidden when loading */}
       {(!loading || loadMode !== 'nuosupport') && (
-      <div className="timeline" onMouseMove={(e: any) => setMousePos({x: e.clientX, y: e.clientY})}>
-        <DatabaseTimeline
-          dbStates={dbStates}
-          events={events}
-          gStart={gStart}
-          gEnd={gEnd}
-          cursorX={cursorX}
-          setCursorX={setCursorX}
-          focusedTimelineItem={focusedTimelineItem}
-          setFocusedTimelineItem={setFocusedTimelineItem}
-          setPanelFocus={setPanelFocus}
-          setSelectedDb={setSelectedDb}
-          setSelectedSid={setSelectedSid}
-          setHoveredBar={setHoveredBar}
-        />
-        
-        <UnclassifiedEventsRow
-          unclassifiedEvents={unclassifiedEvents}
-          gStart={gStart}
-          gEnd={gEnd}
-          selectedUnclassified={selectedUnclassified}
-          setSelectedUnclassified={setSelectedUnclassified}
-          setSelectedSid={setSelectedSid}
-          setSelectedDb={setSelectedDb}
-          setPanelFocus={setPanelFocus}
-          setFocusedTimelineItem={setFocusedTimelineItem}
-          setHoveredBar={setHoveredBar}
-        />
-        
-        <FilterBar
-          filterType={filterType}
-          setFilterType={setFilterType}
-          filterServers={filterServers}
-          setFilterServers={setFilterServers}
-          filterSids={filterSids}
-          setFilterSids={setFilterSids}
-          typeOptions={typeOptions}
-          allServers={allServers}
-          allSids={allSids}
-          serverDropdownOpen={serverDropdownOpen}
-          setServerDropdownOpen={setServerDropdownOpen}
-          sidDropdownOpen={sidDropdownOpen}
-          setSidDropdownOpen={setSidDropdownOpen}
-        />
-        
-        <ProcessTimeline
-          addresses={addresses}
-          groupsByAddress={groupsByAddress}
-          rowsBySid={rowsBySid}
-          allRowsBySid={allRowsBySid}
-          events={events}
-          failureProtocols={failureProtocols}
-          gStart={gStart}
-          gEnd={gEnd}
-          globalEnd={globalEnd}
-          cursorX={cursorX}
-          setCursorX={setCursorX}
-          focusedTimelineItem={focusedTimelineItem}
-          setFocusedTimelineItem={setFocusedTimelineItem}
-          setPanelFocus={setPanelFocus}
-          setSelectedSid={setSelectedSid}
-          setSelectedDb={setSelectedDb}
-          setSelectedUnclassified={setSelectedUnclassified}
-          setHoveredBar={setHoveredBar}
-        />
+      <div className="main-layout">
+        <div 
+          className="timeline-container" 
+          style={{ 
+            flex: domainPanelOpen ? 'none' : '1',
+            width: domainPanelOpen ? `calc(100% - ${domainPanelWidth}px - 16px)` : '100%'
+          }}
+        >
+          <div className="timeline" onMouseMove={(e: any) => setMousePos({x: e.clientX, y: e.clientY})}>
+            {/* TimePoint Slider - shows above database timeline when domain states are available */}
+            {domainStates.length > 0 && (
+              <div className="timepoint-slider-wrapper">
+                <TimePointSlider
+                  globalStart={gStart}
+                  globalEnd={gEnd}
+                  currentTime={currentTimePoint || gStart}
+                  setCurrentTime={setCurrentTimePoint}
+                  allStateTimestamps={domainStates.map(ds => ds.timestamp)}
+                  onNext={handleNextState}
+                  onPrev={handlePrevState}
+                />
+              </div>
+            )}
+            
+            <DatabaseTimeline
+              dbStates={dbStates}
+              events={events}
+              gStart={gStart}
+              gEnd={gEnd}
+              cursorX={cursorX}
+              setCursorX={setCursorX}
+              focusedTimelineItem={focusedTimelineItem}
+              setFocusedTimelineItem={setFocusedTimelineItem}
+              setPanelFocus={setPanelFocus}
+              setSelectedDb={setSelectedDb}
+              setSelectedSid={setSelectedSid}
+              setHoveredBar={setHoveredBar}
+            />
+            
+            <ApTimeline
+              processEvents={processEvents}
+              loadedServer={loadedServer}
+              gStart={gStart}
+              gEnd={gEnd}
+              cursorX={cursorX}
+              setCursorX={setCursorX}
+              focusedTimelineItem={focusedTimelineItem}
+              setFocusedTimelineItem={setFocusedTimelineItem}
+              setPanelFocus={setPanelFocus}
+              setSelectedAp={setSelectedAp}
+              setSelectedSid={setSelectedSid}
+              setSelectedDb={setSelectedDb}
+              setSelectedUnclassified={setSelectedUnclassified}
+              setHoveredBar={setHoveredBar}
+            />
+            
+            <UnclassifiedEventsRow
+              unclassifiedEvents={unclassifiedEvents}
+              gStart={gStart}
+              gEnd={gEnd}
+              selectedUnclassified={selectedUnclassified}
+              setSelectedUnclassified={setSelectedUnclassified}
+              setSelectedSid={setSelectedSid}
+              setSelectedDb={setSelectedDb}
+              setPanelFocus={setPanelFocus}
+              setFocusedTimelineItem={setFocusedTimelineItem}
+              setHoveredBar={setHoveredBar}
+            />
+            
+            <FilterBar
+              filterType={filterType}
+              setFilterType={setFilterType}
+              filterServers={filterServers}
+              setFilterServers={setFilterServers}
+              filterSids={filterSids}
+              setFilterSids={setFilterSids}
+              typeOptions={typeOptions}
+              allServers={allServers}
+              allSids={allSids}
+              serverDropdownOpen={serverDropdownOpen}
+              setServerDropdownOpen={setServerDropdownOpen}
+              sidDropdownOpen={sidDropdownOpen}
+              setSidDropdownOpen={setSidDropdownOpen}
+            />
+            
+            <ProcessTimeline
+              addresses={addresses}
+              groupsByAddress={groupsByAddress}
+              rowsBySid={rowsBySid}
+              allRowsBySid={allRowsBySid}
+              events={events}
+              failureProtocols={failureProtocols}
+              gStart={gStart}
+              gEnd={gEnd}
+              globalEnd={globalEnd}
+              cursorX={cursorX}
+              setCursorX={setCursorX}
+              focusedTimelineItem={focusedTimelineItem}
+              setFocusedTimelineItem={setFocusedTimelineItem}
+              setPanelFocus={setPanelFocus}
+              setSelectedSid={setSelectedSid}
+              setSelectedDb={setSelectedDb}
+              setSelectedAp={setSelectedAp}
+              setSelectedUnclassified={setSelectedUnclassified}
+              setHoveredBar={setHoveredBar}
+            />
 
-        <Tooltip hoveredBar={hoveredBar} mousePos={mousePos} />
+            <Tooltip hoveredBar={hoveredBar} mousePos={mousePos} />
 
-        <RangeSlider
-          globalStart={globalStart}
-          globalEnd={globalEnd}
-          rangeStart={rangeStart}
-          rangeEnd={rangeEnd}
-          setRangeStart={setRangeStart}
-          setRangeEnd={setRangeEnd}
-          dragging={dragging}
-          setDragging={setDragging}
-          setDragStartX={setDragStartX}
-          setDragStartRange={setDragStartRange}
-          allRowsBySid={allRowsBySid}
-          dbStates={dbStates}
-        />
+            <RangeSlider
+              globalStart={globalStart}
+              globalEnd={globalEnd}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              setRangeStart={setRangeStart}
+              setRangeEnd={setRangeEnd}
+              dragging={dragging}
+              setDragging={setDragging}
+              setDragStartX={setDragStartX}
+              setDragStartRange={setDragStartRange}
+              allRowsBySid={allRowsBySid}
+              dbStates={dbStates}
+              events={events}
+              addresses={allAddresses}
+              groupsByAddress={allGroupsByAddress}
+            />
 
-        <LogPanel
-          selectedSid={selectedSid}
-          selectedDb={selectedDb}
-          selectedUnclassified={selectedUnclassified}
-          setSelectedSid={setSelectedSid}
-          setSelectedDb={setSelectedDb}
-          setSelectedUnclassified={setSelectedUnclassified}
-          unclassifiedEvents={unclassifiedEvents}
-          databaseEvents={databaseEvents}
-          events={events}
-          dbStates={dbStates}
-          failureProtocols={failureProtocols}
-          rowsBySid={rowsBySid}
-          panelFocus={panelFocus}
-          focusedEventIndex={focusedEventIndex}
-          setFocusedEventIndex={setFocusedEventIndex}
-          setPanelFocus={setPanelFocus}
-          loadedServer={loadedServer}
-        />
+            <LogPanel
+              selectedSid={selectedSid}
+              selectedDb={selectedDb}
+              selectedAp={selectedAp}
+              selectedUnclassified={selectedUnclassified}
+              setSelectedSid={setSelectedSid}
+              setSelectedDb={setSelectedDb}
+              setSelectedAp={setSelectedAp}
+              setSelectedUnclassified={setSelectedUnclassified}
+              unclassifiedEvents={unclassifiedEvents}
+              databaseEvents={databaseEvents}
+              processEvents={processEvents}
+              events={events}
+              dbStates={dbStates}
+              failureProtocols={failureProtocols}
+              rowsBySid={rowsBySid}
+              panelFocus={panelFocus}
+              focusedEventIndex={focusedEventIndex}
+              setFocusedEventIndex={setFocusedEventIndex}
+              setPanelFocus={setPanelFocus}
+              loadedServer={loadedServer}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+            />
+          </div>
+        </div>
+        
+        {/* Resize handle */}
+        {domainPanelOpen && (
+          <div 
+            className="panel-resize-handle"
+            onMouseDown={() => setIsResizing(true)}
+          />
+        )}
+        
+        {/* Domain State Panel - collapsible on the right, always visible */}
+        <div style={{ width: domainPanelOpen ? `${domainPanelWidth}px` : 'auto' }}>
+          <DomainStatePanel
+            currentSnapshot={currentDomainStateSnapshot}
+            previousSnapshot={previousDomainStateSnapshot}
+            onNext={handleNextState}
+            onPrev={handlePrevState}
+            hasNext={domainStates.some(ds => ds.timestamp > (currentTimePoint || 0))}
+            hasPrev={domainStates.some(ds => ds.timestamp < (currentTimePoint || Infinity))}
+            isOpen={domainPanelOpen}
+            onClose={() => setDomainPanelOpen(false)}
+          />
+        </div>
       </div>
       )}
     </div>

@@ -3,6 +3,7 @@
 declare const Bun: any;
 
 import type { ServerTimeRange } from './types';
+import { parseShowDatabase, type DomainState } from './domain-state-parser';
 
 const DASSAULT_PATH = '/support/tickets/dassault';
 
@@ -225,6 +226,100 @@ export async function handleServerTimeRanges(request: any): Promise<Response> {
 	} catch (err) {
 		const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
 		console.error(`[server-time-ranges] Error:`, err);
+		return new Response(JSON.stringify({ error: msg }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/**
+ * Get all domain state snapshots from show-database.txt files in admin directory
+ */
+export async function handleDomainStates(request: any): Promise<Response> {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get('ticket');
+	const pkg = url.searchParams.get('package');
+	console.log(`[domain-states] Request for ticket=${ticket}, package=${pkg}`);
+	
+	if (!ticket || !pkg) {
+		return new Response(JSON.stringify({ error: 'Missing ticket or package parameter' }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+
+	const adminPath = `${DASSAULT_PATH}/${ticket}/${pkg}/admin`;
+	console.log(`[domain-states] Reading from: ${adminPath}`);
+	
+	try {
+		const fs = await import('fs/promises');
+		const path = await import('path');
+		const entries = await fs.readdir(adminPath);
+		console.log(`[domain-states] Found ${entries.length} entries`);
+
+		const domainStates: Array<{ timestamp: number; iso: string; state: DomainState }> = [];
+
+		for (const entry of entries) {
+			try {
+				const fullPath = path.join(adminPath, entry);
+				const stat = await fs.stat(fullPath);
+				if (!stat.isDirectory()) continue;
+
+				// Try both show-domain.txt and show-database.txt
+				let showDbPath = path.join(fullPath, 'show-domain.txt');
+				let showDbExists = false;
+				
+				try {
+					await fs.access(showDbPath);
+					showDbExists = true;
+				} catch (e) {
+					// Try show-database.txt as fallback
+					showDbPath = path.join(fullPath, 'show-database.txt');
+					try {
+						await fs.access(showDbPath);
+						showDbExists = true;
+					} catch (e2) {
+						// Neither file exists, skip
+					}
+				}
+				
+				if (showDbExists) {
+					try {
+						const showDbContent = await fs.readFile(showDbPath, 'utf8');
+						const domainState = parseShowDatabase(showDbContent);
+						
+						// Extract timestamp from server time if available
+						if (domainState.serverTime) {
+							const timestamp = Date.parse(domainState.serverTime);
+							if (!isNaN(timestamp)) {
+								domainStates.push({
+									timestamp,
+									iso: domainState.serverTime,
+									state: domainState,
+								});
+								console.log(`[domain-states] Added state from ${entry}: ${domainState.serverTime}`);
+							}
+						}
+					} catch (e) {
+						console.error(`[domain-states] Error parsing ${entry}:`, e);
+					}
+				}
+			} catch (e) {
+				console.error(`[domain-states] Error processing ${entry}:`, e);
+			}
+		}
+
+		// Sort by timestamp
+		domainStates.sort((a, b) => a.timestamp - b.timestamp);
+		console.log(`[domain-states] Returning ${domainStates.length} domain states`);
+		
+		return new Response(JSON.stringify({ domainStates }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+		console.error(`[domain-states] Error:`, err);
 		return new Response(JSON.stringify({ error: msg }), {
 			status: 500,
 			headers: { 'Content-Type': 'application/json' },

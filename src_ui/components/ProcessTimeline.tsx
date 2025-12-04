@@ -24,6 +24,7 @@ type ProcessTimelineProps = {
   setPanelFocus: (focus: 'timeline' | 'table' | 'events') => void;
   setSelectedSid: (sid: number | null) => void;
   setSelectedDb: (db: string | null) => void;
+  setSelectedAp: (ap: string | null) => void;
   setSelectedUnclassified: (selected: boolean) => void;
   setHoveredBar: (bar: HoveredBar | null) => void;
 };
@@ -45,6 +46,7 @@ export function ProcessTimeline({
   setPanelFocus,
   setSelectedSid,
   setSelectedDb,
+  setSelectedAp,
   setSelectedUnclassified,
   setHoveredBar,
 }: ProcessTimelineProps) {
@@ -74,14 +76,17 @@ export function ProcessTimeline({
       )}
       {addresses.map((addr) => {
         const sids = groupsByAddress[addr] || [];
+        
         return (
           <div key={`group-${addr}`}>
+            {/* AP row - just a label */}
             <div className="stack-row" style={{ opacity: 0.9, fontWeight: 600 }}>
               <div className="stack-label" style={{ color: 'white', fontSize: 10 }}>
                 {addr}
               </div>
               <div className="stack-track" />
             </div>
+            
             {sids.map((sid, sidIndexInGroup) => {
               const procInst = (rowsBySid[sid] || []).sort((a, b) => a.start - b.start);
               if (procInst.length === 0) return null;
@@ -272,6 +277,44 @@ export function ProcessTimeline({
                             }
                             onMouseEnter={() =>
                               setHoveredBar({ type: 'frp', id: frpId, content: tooltipContent })
+                            }
+                            onMouseLeave={() => setHoveredBar(null)}
+                          />
+                        );
+                      })}
+                    {events
+                      .filter((e: any) => {
+                        if (e.sid !== Number(sid)) return false;
+                        if (!/RemoveNodeCommand/.test(e.message ?? '')) return false;
+                        const reasonMatch = e.message?.match(
+                          /reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/
+                        );
+                        return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+                      })
+                      .map((assertEvent, idx) => {
+                        const left = ((assertEvent.ts - gStart) / (gEnd - gStart)) * 100;
+                        const tooltipContent = `ASSERT detected\n${assertEvent.iso}\n${assertEvent.message}`;
+                        const assertId = `assert-${sid}-${idx}`;
+                        return (
+                          <div
+                            key={assertId}
+                            className="assert-dot"
+                            style={
+                              {
+                                left: `${left}%`,
+                                position: 'absolute',
+                                top: '2px',
+                                width: 8,
+                                height: 8,
+                                background: 'hsla(0, 100%, 40%, 1)',
+                                transform: 'rotate(45deg)',
+                                zIndex: 11,
+                                anchorName: `--${assertId}`,
+                                boxShadow: '0 0 8px 2px rgba(255, 0, 0, 0.8), 0 0 4px 1px rgba(255, 50, 50, 0.9), 0 0 12px 3px rgba(255, 0, 0, 0.4)',
+                              } as any
+                            }
+                            onMouseEnter={() =>
+                              setHoveredBar({ type: 'assert', id: assertId, content: tooltipContent })
                             }
                             onMouseLeave={() => setHoveredBar(null)}
                           />

@@ -12,6 +12,7 @@ import {
 	handleListDiagnosePackages,
 	handleListServers,
 	handleServerTimeRanges,
+	handleDomainStates,
 } from './src/file-handlers';
 
 
@@ -29,6 +30,7 @@ Bun.serve({
 		if (url.pathname === "/list-diagnose-packages") return handleListDiagnosePackages(req);
 		if (url.pathname === "/list-servers") return handleListServers(req);
 		if (url.pathname === "/server-time-ranges") return handleServerTimeRanges(req);
+		if (url.pathname === "/domain-states") return handleDomainStates(req);
 		if (url.pathname === "/load-diagnose") return handleLoadDiagnose(req);
 
 		// default to serving static files from ./public

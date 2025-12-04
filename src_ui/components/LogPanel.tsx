@@ -3,12 +3,15 @@ import type { Instance, EventType, FailureProtocol, DbStates } from '../types';
 type LogPanelProps = {
   selectedSid: number | null;
   selectedDb: string | null;
+  selectedAp: string | null;
   selectedUnclassified: boolean;
   setSelectedSid: (sid: number | null) => void;
   setSelectedDb: (db: string | null) => void;
+  setSelectedAp: (ap: string | null) => void;
   setSelectedUnclassified: (selected: boolean) => void;
   unclassifiedEvents: EventType[];
   databaseEvents: EventType[];
+  processEvents: EventType[];
   events: EventType[];
   dbStates: DbStates;
   failureProtocols: FailureProtocol[];
@@ -18,6 +21,8 @@ type LogPanelProps = {
   setFocusedEventIndex: (index: number) => void;
   setPanelFocus: (focus: 'timeline' | 'table' | 'events') => void;
   loadedServer: string;
+  rangeStart: number | null;
+  rangeEnd: number | null;
 };
 
 declare const document: any;
@@ -25,12 +30,15 @@ declare const document: any;
 export function LogPanel({
   selectedSid,
   selectedDb,
+  selectedAp,
   selectedUnclassified,
   setSelectedSid,
   setSelectedDb,
+  setSelectedAp,
   setSelectedUnclassified,
   unclassifiedEvents,
   databaseEvents,
+  processEvents,
   events,
   dbStates,
   failureProtocols,
@@ -40,8 +48,10 @@ export function LogPanel({
   setFocusedEventIndex,
   setPanelFocus,
   loadedServer,
+  rangeStart,
+  rangeEnd,
 }: LogPanelProps) {
-  if (selectedSid === null && selectedDb === null && !selectedUnclassified) {
+  if (selectedSid === null && selectedDb === null && selectedAp === null && !selectedUnclassified) {
     return (
       <div
         style={{
@@ -71,26 +81,48 @@ export function LogPanel({
         <UnclassifiedPanel
           unclassifiedEvents={unclassifiedEvents}
           setSelectedUnclassified={setSelectedUnclassified}
+          setSelectedAp={setSelectedAp}
           panelFocus={panelFocus}
           focusedEventIndex={focusedEventIndex}
           setFocusedEventIndex={setFocusedEventIndex}
           setPanelFocus={setPanelFocus}
+          rangeStart={rangeStart}
+          rangeEnd={rangeEnd}
         />
       ) : selectedDb !== null ? (
         <DatabasePanel
           selectedDb={selectedDb}
           setSelectedDb={setSelectedDb}
+          setSelectedAp={setSelectedAp}
           dbStates={dbStates}
           databaseEvents={databaseEvents}
           panelFocus={panelFocus}
           focusedEventIndex={focusedEventIndex}
           setFocusedEventIndex={setFocusedEventIndex}
           setPanelFocus={setPanelFocus}
+          rangeStart={rangeStart}
+          rangeEnd={rangeEnd}
+        />
+      ) : selectedAp !== null ? (
+        <ApPanel
+          selectedAp={selectedAp}
+          setSelectedAp={setSelectedAp}
+          setSelectedSid={setSelectedSid}
+          setSelectedDb={setSelectedDb}
+          setSelectedUnclassified={setSelectedUnclassified}
+          processEvents={processEvents}
+          panelFocus={panelFocus}
+          focusedEventIndex={focusedEventIndex}
+          setFocusedEventIndex={setFocusedEventIndex}
+          setPanelFocus={setPanelFocus}
+          rangeStart={rangeStart}
+          rangeEnd={rangeEnd}
         />
       ) : (
         <ProcessPanel
           selectedSid={selectedSid}
           setSelectedSid={setSelectedSid}
+          setSelectedAp={setSelectedAp}
           events={events}
           failureProtocols={failureProtocols}
           rowsBySid={rowsBySid}
@@ -99,6 +131,8 @@ export function LogPanel({
           setFocusedEventIndex={setFocusedEventIndex}
           setPanelFocus={setPanelFocus}
           loadedServer={loadedServer}
+          rangeStart={rangeStart}
+          rangeEnd={rangeEnd}
         />
       )}
     </div>
@@ -108,13 +142,21 @@ export function LogPanel({
 function UnclassifiedPanel({
   unclassifiedEvents,
   setSelectedUnclassified,
+  setSelectedAp,
   panelFocus,
   focusedEventIndex,
   setFocusedEventIndex,
   setPanelFocus,
+  rangeStart,
+  rangeEnd,
 }: any) {
+  // Filter events by time range
+  const filteredEvents = rangeStart !== null && rangeEnd !== null
+    ? unclassifiedEvents.filter((e: any) => e.ts >= rangeStart && e.ts <= rangeEnd)
+    : unclassifiedEvents;
+
   const eventTimeline = (() => {
-    if (unclassifiedEvents.length === 0) return null;
+    if (filteredEvents.length === 0) return null;
 
     const minTs = Math.min(...unclassifiedEvents.map((e: any) => e.ts));
     const maxTs = Math.max(...unclassifiedEvents.map((e: any) => e.ts));
@@ -191,7 +233,10 @@ function UnclassifiedPanel({
       >
         <div style={{ fontWeight: 600 }}>Logs - Unclassified</div>
         <button
-          onClick={() => setSelectedUnclassified(false)}
+          onClick={() => {
+            setSelectedUnclassified(false);
+            setSelectedAp(null);
+          }}
           style={{
             background: 'var(--button-bg)',
             color: 'var(--text-muted)',
@@ -206,7 +251,7 @@ function UnclassifiedPanel({
       </div>
       {eventTimeline}
       <div style={{ maxHeight: 480, overflow: 'auto' }}>
-        {unclassifiedEvents.map((ev: any, idx: number) => (
+        {filteredEvents.map((ev: any, idx: number) => (
           <div
             key={idx}
             className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`}
@@ -238,12 +283,15 @@ function UnclassifiedPanel({
 function DatabasePanel({
   selectedDb,
   setSelectedDb,
+  setSelectedAp,
   dbStates,
   databaseEvents,
   panelFocus,
   focusedEventIndex,
   setFocusedEventIndex,
   setPanelFocus,
+  rangeStart,
+  rangeEnd,
 }: any) {
   const dbStateEvents = dbStates[selectedDb] || [];
   const dbSpecificEvents = databaseEvents.filter((e: any) => {
@@ -278,11 +326,16 @@ function DatabasePanel({
   ];
   allDbEvents.sort((a, b) => a.start - b.start);
 
-  const eventTimeline = (() => {
-    if (allDbEvents.length === 0) return null;
+  // Filter events by time range
+  const filteredDbEvents = rangeStart !== null && rangeEnd !== null
+    ? allDbEvents.filter((e: any) => e.start >= rangeStart && e.start <= rangeEnd)
+    : allDbEvents;
 
-    const minTs = Math.min(...allDbEvents.map((e: any) => e.start));
-    const maxTs = Math.max(...allDbEvents.map((e: any) => e.start));
+  const eventTimeline = (() => {
+    if (filteredDbEvents.length === 0) return null;
+
+    const minTs = Math.min(...filteredDbEvents.map((e: any) => e.start));
+    const maxTs = Math.max(...filteredDbEvents.map((e: any) => e.start));
     const timelineWidth = 380;
 
     return (
@@ -307,7 +360,7 @@ function DatabasePanel({
               transform: 'translateY(-50%)',
             }}
           />
-          {allDbEvents.map((seg: any, idx: number) => {
+          {filteredDbEvents.map((seg: any, idx: number) => {
             const pos =
               maxTs > minTs
                 ? ((seg.start - minTs) / (maxTs - minTs)) * timelineWidth
@@ -358,7 +411,10 @@ function DatabasePanel({
       >
         <div style={{ fontWeight: 600 }}>Logs - Database {selectedDb}</div>
         <button
-          onClick={() => setSelectedDb(null)}
+          onClick={() => {
+            setSelectedDb(null);
+            setSelectedAp(null);
+          }}
           style={{
             background: 'var(--button-bg)',
             color: 'var(--text-muted)',
@@ -373,7 +429,7 @@ function DatabasePanel({
       </div>
       {eventTimeline}
       <div style={{ maxHeight: 480, overflow: 'auto' }}>
-        {allDbEvents.map((seg: any, idx) => {
+        {filteredDbEvents.map((seg: any, idx) => {
           const isDbUpdate = /Updated database from DatabaseInfo/.test(seg.message);
           return (
             <div
@@ -523,6 +579,7 @@ function DatabasePanel({
 function ProcessPanel({
   selectedSid,
   setSelectedSid,
+  setSelectedAp,
   events,
   failureProtocols,
   rowsBySid,
@@ -531,6 +588,8 @@ function ProcessPanel({
   setFocusedEventIndex,
   setPanelFocus,
   loadedServer,
+  rangeStart,
+  rangeEnd,
 }: any) {
   const instsForSid = rowsBySid[String(selectedSid)] || [];
   const related = events.filter((e: any) => {
@@ -575,11 +634,16 @@ function ProcessPanel({
   ];
   allEvents.sort((a, b) => a.ts - b.ts);
 
-  const eventTimeline = (() => {
-    if (allEvents.length === 0) return null;
+  // Filter events by time range
+  const filteredEvents = rangeStart !== null && rangeEnd !== null
+    ? allEvents.filter((e) => e.ts >= rangeStart && e.ts <= rangeEnd)
+    : allEvents;
 
-    const minTs = Math.min(...allEvents.map((e) => e.ts));
-    const maxTs = Math.max(...allEvents.map((e) => e.ts));
+  const eventTimeline = (() => {
+    if (filteredEvents.length === 0) return null;
+
+    const minTs = Math.min(...filteredEvents.map((e) => e.ts));
+    const maxTs = Math.max(...filteredEvents.map((e) => e.ts));
     const timelineWidth = 380;
 
     return (
@@ -604,7 +668,7 @@ function ProcessPanel({
               transform: 'translateY(-50%)',
             }}
           />
-          {allEvents.map((ev, idx) => {
+          {filteredEvents.map((ev, idx) => {
             const pos =
               maxTs > minTs ? ((ev.ts - minTs) / (maxTs - minTs)) * timelineWidth : timelineWidth / 2;
             const isSelected = panelFocus === 'events' && focusedEventIndex === idx;
@@ -650,7 +714,7 @@ function ProcessPanel({
   let lastFileSource: string | undefined = undefined;
   const elements: JSX.Element[] = [];
 
-  allEvents.forEach((ev, idx) => {
+  filteredEvents.forEach((ev, idx) => {
     if (loadedServer && ev.fileSource && ev.fileSource !== lastFileSource) {
       elements.push(
         <div
@@ -905,7 +969,204 @@ function ProcessPanel({
       >
         <div style={{ fontWeight: 600 }}>Logs - sid {selectedSid}</div>
         <button
-          onClick={() => setSelectedSid(null)}
+          onClick={() => {
+            setSelectedSid(null);
+            setSelectedAp(null);
+          }}
+          style={{
+            background: 'var(--button-bg)',
+            color: 'var(--text-muted)',
+            border: 'none',
+            padding: '6px 8px',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          Close
+        </button>
+      </div>
+      {eventTimeline}
+      <div style={{ maxHeight: 480, overflow: 'auto' }}>{elements}</div>
+    </div>
+  );
+}
+
+function ApPanel({
+  selectedAp,
+  setSelectedAp,
+  setSelectedSid,
+  setSelectedDb,
+  setSelectedUnclassified,
+  processEvents,
+  panelFocus,
+  focusedEventIndex,
+  setFocusedEventIndex,
+  setPanelFocus,
+  rangeStart,
+  rangeEnd,
+}: any) {
+  // All AP events (no sid)
+  const apEvents = processEvents.filter((e: any) => e.sid === null);
+
+  // Apply range filter if active
+  const filteredEvents = rangeStart !== null && rangeEnd !== null
+    ? apEvents.filter((e: any) => e.ts >= rangeStart && e.ts <= rangeEnd)
+    : apEvents;
+
+  const eventTimeline = (() => {
+    if (filteredEvents.length === 0) return null;
+
+    const minTs = Math.min(...filteredEvents.map((e) => e.ts));
+    const maxTs = Math.max(...filteredEvents.map((e) => e.ts));
+    const timelineWidth = 380;
+
+    return (
+      <div style={{ marginBottom: 12, padding: '8px 0' }}>
+        <div
+          style={{
+            position: 'relative',
+            height: 32,
+            background: 'var(--timeline-event-bg)',
+            borderRadius: 4,
+            padding: '0 10px',
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              left: 10,
+              right: 10,
+              top: '50%',
+              height: 2,
+              background: 'rgba(159, 180, 201, 0.3)',
+              transform: 'translateY(-50%)',
+            }}
+          />
+          {filteredEvents.map((ev, idx) => {
+            const pos =
+              maxTs > minTs ? ((ev.ts - minTs) / (maxTs - minTs)) * timelineWidth : timelineWidth / 2;
+            const isSelected = panelFocus === 'events' && focusedEventIndex === idx;
+            return (
+              <div
+                key={idx}
+                title={ev.iso}
+                style={{
+                  position: 'absolute',
+                  left: 10 + pos,
+                  top: '50%',
+                  width: isSelected ? 12 : 8,
+                  height: isSelected ? 12 : 8,
+                  background: isSelected ? '#43bdff' : '#2b9df4',
+                  transform: 'translateX(-50%) translateY(-50%) rotate(45deg)',
+                  cursor: 'pointer',
+                  border: isSelected ? '2px solid #fff' : '1px solid rgba(255, 255, 255, 0.3)',
+                  zIndex: isSelected ? 10 : 1,
+                  transition: 'all 0.2s ease',
+                }}
+                onClick={() => {
+                  setFocusedEventIndex(idx);
+                  setPanelFocus('events');
+                  setTimeout(() => {
+                    const elem = document.querySelectorAll('.event-item')[idx];
+                    if (elem) elem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                  }, 50);
+                }}
+              />
+            );
+          })}
+        </div>
+      </div>
+    );
+  })();
+
+  const elements: JSX.Element[] = [];
+
+  filteredEvents.forEach((ev, idx) => {
+    const rawLog = (ev as any).raw || ev.message;
+    const logMatch = rawLog.match(/^(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+(\S+)\s+(.*)$/);
+    let logLevel = '';
+    let threadInfo = '';
+    let loggerName = '';
+    let logMessage = ev.message;
+
+    if (logMatch) {
+      logLevel = logMatch[2];
+      threadInfo = logMatch[3];
+      loggerName = logMatch[4];
+      logMessage = logMatch[5];
+    }
+
+    elements.push(
+      <div
+        key={idx}
+        className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`}
+        onClick={() => {
+          setFocusedEventIndex(idx);
+          setPanelFocus('events');
+        }}
+        style={{
+          padding: '6px 8px',
+          borderBottom: '1px solid rgba(255,255,255,0.02)',
+          cursor: 'pointer',
+          background:
+            panelFocus === 'events' && focusedEventIndex === idx
+              ? 'rgba(43, 157, 244, 0.15)'
+              : undefined,
+        }}
+      >
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ev.iso}</div>
+        <div style={{ fontSize: 13, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+          {logMatch ? (
+            <div>
+              <span
+                style={{
+                  color:
+                    logLevel === 'ERROR'
+                      ? '#ff6666'
+                      : logLevel === 'WARN'
+                      ? '#ffaa66'
+                      : 'var(--text-hint)',
+                  fontWeight: logLevel === 'ERROR' || logLevel === 'WARN' ? 600 : 400,
+                }}
+              >
+                {logLevel}
+              </span>
+              <span style={{ color: 'var(--text-hint)', margin: '0 6px' }}>|</span>
+              <span style={{ color: 'var(--text-hint)', fontSize: 11 }}>[{threadInfo}]</span>
+              <span style={{ color: 'var(--text-hint)', margin: '0 6px' }}>|</span>
+              <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>
+                {loggerName}
+              </span>
+              <div style={{ marginTop: 4, color: 'var(--text-primary)' }}>
+                {logMessage}
+              </div>
+            </div>
+          ) : (
+            rawLog
+          )}
+        </div>
+      </div>
+    );
+  });
+
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 8,
+        }}
+      >
+        <div style={{ fontWeight: 600 }}>Admin Process Events</div>
+        <button
+          onClick={() => {
+            setSelectedAp(null);
+            setSelectedSid(null);
+            setSelectedDb(null);
+            setSelectedUnclassified(false);
+          }}
           style={{
             background: 'var(--button-bg)',
             color: 'var(--text-muted)',
