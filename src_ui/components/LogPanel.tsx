@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Instance, EventType, FailureProtocol, DbStates } from '../types';
 
 type LogPanelProps = {
@@ -51,6 +52,8 @@ export function LogPanel({
   rangeStart,
   rangeEnd,
 }: LogPanelProps) {
+  const [viewMode, setViewMode] = useState<'ui' | 'text'>('ui');
+
   if (selectedSid === null && selectedDb === null && selectedAp === null && !selectedUnclassified) {
     return (
       <div
@@ -150,6 +153,8 @@ function UnclassifiedPanel({
   rangeStart,
   rangeEnd,
 }: any) {
+  const [viewMode, setViewMode] = useState<'ui' | 'text'>('ui');
+  
   // Filter events by time range
   const filteredEvents = rangeStart !== null && rangeEnd !== null
     ? unclassifiedEvents.filter((e: any) => e.ts >= rangeStart && e.ts <= rangeEnd)
@@ -188,6 +193,9 @@ function UnclassifiedPanel({
             const pos =
               maxTs > minTs ? ((ev.ts - minTs) / (maxTs - minTs)) * timelineWidth : timelineWidth / 2;
             const isSelected = panelFocus === 'events' && focusedEventIndex === idx;
+            const rawLog = ev.raw ?? ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+            
             return (
               <div
                 key={idx}
@@ -198,7 +206,13 @@ function UnclassifiedPanel({
                   top: '50%',
                   width: isSelected ? 12 : 8,
                   height: isSelected ? 12 : 8,
-                  background: isSelected ? '#b380ff' : '#9966ff',
+                  background: isSelected
+                    ? hasError
+                      ? '#ff7070'
+                      : '#b380ff'
+                    : hasError
+                    ? '#ff5050'
+                    : '#9966ff',
                   transform: 'translateX(-50%) translateY(-50%) rotate(45deg)',
                   cursor: 'pointer',
                   border: isSelected ? '2px solid #fff' : '1px solid rgba(255, 255, 255, 0.3)',
@@ -232,49 +246,128 @@ function UnclassifiedPanel({
         }}
       >
         <div style={{ fontWeight: 600 }}>Logs - Unclassified</div>
-        <button
-          onClick={() => {
-            setSelectedUnclassified(false);
-            setSelectedAp(null);
-          }}
-          style={{
-            background: 'var(--button-bg)',
-            color: 'var(--text-muted)',
-            border: 'none',
-            padding: '6px 8px',
-            borderRadius: 4,
-            cursor: 'pointer',
-          }}
-        >
-          Close
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', background: 'var(--bg-secondary)', borderRadius: 4, padding: 2 }}>
+            <button
+              onClick={() => setViewMode('ui')}
+              style={{
+                background: viewMode === 'ui' ? 'var(--button-bg)' : 'transparent',
+                color: viewMode === 'ui' ? 'var(--text-primary)' : 'var(--text-muted)',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              UI
+            </button>
+            <button
+              onClick={() => setViewMode('text')}
+              style={{
+                background: viewMode === 'text' ? 'var(--button-bg)' : 'transparent',
+                color: viewMode === 'text' ? 'var(--text-primary)' : 'var(--text-muted)',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              Text
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              setSelectedUnclassified(false);
+              setSelectedAp(null);
+            }}
+            style={{
+              background: 'var(--button-bg)',
+              color: 'var(--text-muted)',
+              border: 'none',
+              padding: '6px 8px',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </div>
       </div>
       {eventTimeline}
       <div style={{ maxHeight: 480, overflow: 'auto' }}>
-        {filteredEvents.map((ev: any, idx: number) => (
-          <div
-            key={idx}
-            className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`}
-            onClick={() => {
-              setFocusedEventIndex(idx);
-              setPanelFocus('events');
-            }}
-            style={{
-              padding: '6px 8px',
-              borderBottom: '1px solid rgba(255,255,255,0.02)',
-              cursor: 'pointer',
-              background:
-                panelFocus === 'events' && focusedEventIndex === idx
-                  ? 'rgba(43, 157, 244, 0.15)'
-                  : undefined,
-            }}
-          >
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ev.iso}</div>
-            <div style={{ fontSize: 13, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
-              {ev.raw ?? ev.message}
+        {viewMode === 'text' ? (
+          // Text view - raw logs
+          filteredEvents.map((ev: any, idx: number) => {
+            const rawLog = ev.raw ?? ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+            
+            return (
+              <div
+                key={idx}
+                className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`}
+                onClick={() => {
+                  setFocusedEventIndex(idx);
+                  setPanelFocus('events');
+                }}
+                style={{
+                  padding: '6px 8px',
+                  borderBottom: '1px solid rgba(255,255,255,0.02)',
+                  cursor: 'pointer',
+                  background:
+                    panelFocus === 'events' && focusedEventIndex === idx
+                      ? 'rgba(43, 157, 244, 0.15)'
+                      : hasError
+                      ? 'rgba(255, 80, 80, 0.08)'
+                      : undefined,
+                  borderLeft: hasError ? '3px solid rgba(255, 80, 80, 0.5)' : undefined,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ color: hasError ? '#ffb3b3' : 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                  {rawLog}
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          // UI view - parsed logs
+          filteredEvents.map((ev: any, idx: number) => {
+            const rawLog = ev.raw ?? ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+            
+            return (
+              <div
+                key={idx}
+                className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`}
+                onClick={() => {
+                  setFocusedEventIndex(idx);
+                  setPanelFocus('events');
+                }}
+                style={{
+                  padding: '6px 8px',
+                borderBottom: '1px solid rgba(255,255,255,0.02)',
+                cursor: 'pointer',
+                background:
+                  panelFocus === 'events' && focusedEventIndex === idx
+                    ? 'rgba(43, 157, 244, 0.15)'
+                    : hasError
+                    ? 'rgba(255, 80, 80, 0.08)'
+                    : undefined,
+                borderLeft: hasError ? '3px solid rgba(255, 80, 80, 0.5)' : undefined,
+              }}
+            >
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ev.iso}</div>
+              <div style={{ fontSize: 13, color: hasError ? '#ffb3b3' : 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                {rawLog}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        }))}
       </div>
     </div>
   );
@@ -293,6 +386,7 @@ function DatabasePanel({
   rangeStart,
   rangeEnd,
 }: any) {
+  const [viewMode, setViewMode] = useState<'ui' | 'text'>('ui');
   const dbStateEvents = dbStates[selectedDb] || [];
   const dbSpecificEvents = databaseEvents.filter((e: any) => {
     const msg = e.message ?? '';
@@ -410,26 +504,90 @@ function DatabasePanel({
         }}
       >
         <div style={{ fontWeight: 600 }}>Logs - Database {selectedDb}</div>
-        <button
-          onClick={() => {
-            setSelectedDb(null);
-            setSelectedAp(null);
-          }}
-          style={{
-            background: 'var(--button-bg)',
-            color: 'var(--text-muted)',
-            border: 'none',
-            padding: '6px 8px',
-            borderRadius: 4,
-            cursor: 'pointer',
-          }}
-        >
-          Close
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', background: 'var(--bg-secondary)', borderRadius: 4, padding: 2 }}>
+            <button
+              onClick={() => setViewMode('ui')}
+              style={{
+                background: viewMode === 'ui' ? 'var(--button-bg)' : 'transparent',
+                color: viewMode === 'ui' ? 'var(--text-primary)' : 'var(--text-muted)',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              UI
+            </button>
+            <button
+              onClick={() => setViewMode('text')}
+              style={{
+                background: viewMode === 'text' ? 'var(--button-bg)' : 'transparent',
+                color: viewMode === 'text' ? 'var(--text-primary)' : 'var(--text-muted)',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              Text
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              setSelectedDb(null);
+              setSelectedAp(null);
+            }}
+            style={{
+              background: 'var(--button-bg)',
+              color: 'var(--text-muted)',
+              border: 'none',
+              padding: '6px 8px',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </div>
       </div>
       {eventTimeline}
       <div style={{ maxHeight: 480, overflow: 'auto' }}>
-        {filteredDbEvents.map((seg: any, idx) => {
+        {viewMode === 'text' ? (
+          filteredDbEvents.map((seg: any, idx) => {
+            const rawLog = seg.message;
+            return (
+              <div
+                key={idx}
+                className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`}
+                onClick={() => {
+                  setFocusedEventIndex(idx);
+                  setPanelFocus('events');
+                }}
+                style={{
+                  padding: '6px 8px',
+                  borderBottom: '1px solid rgba(255,255,255,0.02)',
+                  cursor: 'pointer',
+                  background:
+                    panelFocus === 'events' && focusedEventIndex === idx
+                      ? 'rgba(43, 157, 244, 0.15)'
+                      : undefined,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                  {rawLog}
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          filteredDbEvents.map((seg: any, idx) => {
           const isDbUpdate = /Updated database from DatabaseInfo/.test(seg.message);
           return (
             <div
@@ -570,7 +728,8 @@ function DatabasePanel({
                 })()}
             </div>
           );
-        })}
+        })
+        )}
       </div>
     </div>
   );
@@ -591,6 +750,7 @@ function ProcessPanel({
   rangeStart,
   rangeEnd,
 }: any) {
+  const [viewMode, setViewMode] = useState<'ui' | 'text'>('ui');
   const instsForSid = rowsBySid[String(selectedSid)] || [];
   const related = events.filter((e: any) => {
     if (e.sid === selectedSid) return true;
@@ -672,6 +832,9 @@ function ProcessPanel({
             const pos =
               maxTs > minTs ? ((ev.ts - minTs) / (maxTs - minTs)) * timelineWidth : timelineWidth / 2;
             const isSelected = panelFocus === 'events' && focusedEventIndex === idx;
+            const rawLog = (ev as any).raw || ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+            
             return (
               <div
                 key={idx}
@@ -683,9 +846,13 @@ function ProcessPanel({
                   width: isSelected ? 12 : 8,
                   height: isSelected ? 12 : 8,
                   background: isSelected
-                    ? ev.type === 'frp'
+                    ? hasError
+                      ? '#ff7070'
+                      : ev.type === 'frp'
                       ? '#ff7070'
                       : '#43bdff'
+                    : hasError
+                    ? '#ff5050'
                     : ev.type === 'frp'
                     ? '#ff5050'
                     : '#2b9df4',
@@ -756,6 +923,7 @@ function ProcessPanel({
       : null;
     const isGraceful = reasonMatch && /Gracefully shutdown engine/i.test(reasonMatch[0]);
     const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+    const hasErrorStacktrace = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
 
     const isDbUpdate = /Updated database from DatabaseInfo/.test(logMessage);
     const dbDiff = (ev as any).dbDiff;
@@ -777,7 +945,10 @@ function ProcessPanel({
               ? 'rgba(43, 157, 244, 0.15)'
               : ev.type === 'frp'
               ? 'rgba(255, 80, 80, 0.05)'
+              : hasErrorStacktrace
+              ? 'rgba(255, 80, 80, 0.08)'
               : undefined,
+          borderLeft: hasErrorStacktrace ? '3px solid rgba(255, 80, 80, 0.5)' : undefined,
         }}
       >
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ev.iso}</div>
@@ -819,7 +990,7 @@ function ProcessPanel({
               <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>
                 {loggerName}
               </span>
-              <div style={{ marginTop: 4, color: 'var(--text-primary)' }}>
+              <div style={{ marginTop: 4, color: hasErrorStacktrace ? '#ffb3b3' : 'var(--text-primary)' }}>
                 {isDbUpdate && dbDiff ? (
                   <div>
                     {logMessage}
@@ -968,25 +1139,115 @@ function ProcessPanel({
         }}
       >
         <div style={{ fontWeight: 600 }}>Logs - sid {selectedSid}</div>
-        <button
-          onClick={() => {
-            setSelectedSid(null);
-            setSelectedAp(null);
-          }}
-          style={{
-            background: 'var(--button-bg)',
-            color: 'var(--text-muted)',
-            border: 'none',
-            padding: '6px 8px',
-            borderRadius: 4,
-            cursor: 'pointer',
-          }}
-        >
-          Close
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', background: 'var(--bg-secondary)', borderRadius: 4, padding: 2 }}>
+            <button
+              onClick={() => setViewMode('ui')}
+              style={{
+                background: viewMode === 'ui' ? 'var(--button-bg)' : 'transparent',
+                color: viewMode === 'ui' ? 'var(--text-primary)' : 'var(--text-muted)',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              UI
+            </button>
+            <button
+              onClick={() => setViewMode('text')}
+              style={{
+                background: viewMode === 'text' ? 'var(--button-bg)' : 'transparent',
+                color: viewMode === 'text' ? 'var(--text-primary)' : 'var(--text-muted)',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              Text
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              setSelectedSid(null);
+              setSelectedAp(null);
+            }}
+            style={{
+              background: 'var(--button-bg)',
+              color: 'var(--text-muted)',
+              border: 'none',
+              padding: '6px 8px',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </div>
       </div>
       {eventTimeline}
-      <div style={{ maxHeight: 480, overflow: 'auto' }}>{elements}</div>
+      <div style={{ maxHeight: 480, overflow: 'auto' }}>
+        {viewMode === 'text' ? (
+          filteredEvents.map((ev, idx) => {
+            const rawLog = (ev as any).raw || ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+            
+            return (
+              <div
+                key={idx}
+                className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`}
+                onClick={() => {
+                  setFocusedEventIndex(idx);
+                  setPanelFocus('events');
+                }}
+                style={{
+                  padding: '6px 8px',
+                  borderBottom: '1px solid rgba(255,255,255,0.02)',
+                  cursor: 'pointer',
+                  background:
+                    panelFocus === 'events' && focusedEventIndex === idx
+                      ? 'rgba(43, 157, 244, 0.15)'
+                      : ev.type === 'frp'
+                      ? 'rgba(255, 80, 80, 0.05)'
+                      : hasError
+                      ? 'rgba(255, 80, 80, 0.08)'
+                      : undefined,
+                  borderLeft: hasError ? '3px solid rgba(255, 80, 80, 0.5)' : undefined,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                }}
+              >
+                {ev.type === 'frp' && (
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#ff7070',
+                      background: 'rgba(255, 80, 80, 0.1)',
+                      padding: '2px 6px',
+                      borderRadius: 3,
+                      display: 'inline-block',
+                      marginBottom: 4,
+                    }}
+                  >
+                    FAILURE PROTOCOL
+                  </div>
+                )}
+                <div style={{ color: hasError ? '#ffb3b3' : 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                  {rawLog}
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          elements
+        )}
+      </div>
     </div>
   );
 }
@@ -1005,6 +1266,7 @@ function ApPanel({
   rangeStart,
   rangeEnd,
 }: any) {
+  const [viewMode, setViewMode] = useState<'ui' | 'text'>('ui');
   // All AP events (no sid)
   const apEvents = processEvents.filter((e: any) => e.sid === null);
 
@@ -1046,6 +1308,9 @@ function ApPanel({
             const pos =
               maxTs > minTs ? ((ev.ts - minTs) / (maxTs - minTs)) * timelineWidth : timelineWidth / 2;
             const isSelected = panelFocus === 'events' && focusedEventIndex === idx;
+            const rawLog = (ev as any).raw || ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+            
             return (
               <div
                 key={idx}
@@ -1056,7 +1321,13 @@ function ApPanel({
                   top: '50%',
                   width: isSelected ? 12 : 8,
                   height: isSelected ? 12 : 8,
-                  background: isSelected ? '#43bdff' : '#2b9df4',
+                  background: isSelected
+                    ? hasError
+                      ? '#ff7070'
+                      : '#43bdff'
+                    : hasError
+                    ? '#ff5050'
+                    : '#2b9df4',
                   transform: 'translateX(-50%) translateY(-50%) rotate(45deg)',
                   cursor: 'pointer',
                   border: isSelected ? '2px solid #fff' : '1px solid rgba(255, 255, 255, 0.3)',
@@ -1088,6 +1359,7 @@ function ApPanel({
     let threadInfo = '';
     let loggerName = '';
     let logMessage = ev.message;
+    const hasErrorStacktrace = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
 
     if (logMatch) {
       logLevel = logMatch[2];
@@ -1111,11 +1383,14 @@ function ApPanel({
           background:
             panelFocus === 'events' && focusedEventIndex === idx
               ? 'rgba(43, 157, 244, 0.15)'
+              : hasErrorStacktrace
+              ? 'rgba(255, 80, 80, 0.08)'
               : undefined,
+          borderLeft: hasErrorStacktrace ? '3px solid rgba(255, 80, 80, 0.5)' : undefined,
         }}
       >
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ev.iso}</div>
-        <div style={{ fontSize: 13, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+        <div style={{ fontSize: 13, color: hasErrorStacktrace ? '#ffb3b3' : 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
           {logMatch ? (
             <div>
               <span
@@ -1160,27 +1435,99 @@ function ApPanel({
         }}
       >
         <div style={{ fontWeight: 600 }}>Admin Process Events</div>
-        <button
-          onClick={() => {
-            setSelectedAp(null);
-            setSelectedSid(null);
-            setSelectedDb(null);
-            setSelectedUnclassified(false);
-          }}
-          style={{
-            background: 'var(--button-bg)',
-            color: 'var(--text-muted)',
-            border: 'none',
-            padding: '6px 8px',
-            borderRadius: 4,
-            cursor: 'pointer',
-          }}
-        >
-          Close
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', background: 'var(--bg-secondary)', borderRadius: 4, padding: 2 }}>
+            <button
+              onClick={() => setViewMode('ui')}
+              style={{
+                background: viewMode === 'ui' ? 'var(--button-bg)' : 'transparent',
+                color: viewMode === 'ui' ? 'var(--text-primary)' : 'var(--text-muted)',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              UI
+            </button>
+            <button
+              onClick={() => setViewMode('text')}
+              style={{
+                background: viewMode === 'text' ? 'var(--button-bg)' : 'transparent',
+                color: viewMode === 'text' ? 'var(--text-primary)' : 'var(--text-muted)',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              Text
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              setSelectedAp(null);
+              setSelectedSid(null);
+              setSelectedDb(null);
+              setSelectedUnclassified(false);
+            }}
+            style={{
+              background: 'var(--button-bg)',
+              color: 'var(--text-muted)',
+              border: 'none',
+              padding: '6px 8px',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </div>
       </div>
       {eventTimeline}
-      <div style={{ maxHeight: 480, overflow: 'auto' }}>{elements}</div>
+      <div style={{ maxHeight: 480, overflow: 'auto' }}>
+        {viewMode === 'text' ? (
+          filteredEvents.map((ev, idx) => {
+            const rawLog = (ev as any).raw || ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+            
+            return (
+              <div
+                key={idx}
+                className={`event-item${panelFocus === 'events' && focusedEventIndex === idx ? ' focused' : ''}`}
+                onClick={() => {
+                  setFocusedEventIndex(idx);
+                  setPanelFocus('events');
+                }}
+                style={{
+                  padding: '6px 8px',
+                  borderBottom: '1px solid rgba(255,255,255,0.02)',
+                  cursor: 'pointer',
+                  background:
+                    panelFocus === 'events' && focusedEventIndex === idx
+                      ? 'rgba(43, 157, 244, 0.15)'
+                      : hasError
+                      ? 'rgba(255, 80, 80, 0.08)'
+                      : undefined,
+                  borderLeft: hasError ? '3px solid rgba(255, 80, 80, 0.5)' : undefined,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ color: hasError ? '#ffb3b3' : 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                  {rawLog}
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          elements
+        )}
+      </div>
     </div>
   );
 }

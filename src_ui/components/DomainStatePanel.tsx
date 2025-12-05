@@ -115,12 +115,17 @@ export function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, on
   // Fixed circle dimensions - scale based on number of servers
   const serverCount = allNonLeaderServers.length;
   // Calculate size based on server count: more servers = bigger circle
-  // Base size for 1-2 servers: 300px, add 50px for each additional server, max 600px
-  const circleSize = Math.min(600, Math.max(300, 250 + serverCount * 40));
+  // When there's a leader, we need significantly more space
+  const baseSize = leader ? 400 : 300;
+  const sizeIncrement = leader ? 50 : 40;
+  const maxSize = leader ? 800 : 600;
+  const circleSize = Math.min(maxSize, Math.max(baseSize, baseSize + serverCount * sizeIncrement));
   const centerX = circleSize / 2;
   const centerY = circleSize / 2;
   // Radius is proportional to circle size, leaving space for server nodes
-  const radius = (circleSize / 2) - 80; // 80px margin for server node width
+  // When there's a leader, use much larger radius to avoid overlap with center
+  const marginForNode = 80; // Space for server node width
+  const radius = leader ? (circleSize / 2) - marginForNode - 20 : (circleSize / 2) - marginForNode;
   
   // Calculate positions for servers in a circle
   const getServerPosition = (index: number, total: number) => {
@@ -256,19 +261,21 @@ export function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, on
     };
   }, [currentSnapshot, previousSnapshot]);
 
-  // Debug logging
-  React.useEffect(() => {
-    if (changeInfo.logs.length > 0) {
-      console.log('Domain state changes:', changeInfo);
-    }
-  }, [changeInfo]);
+  // // Debug logging
+  // React.useEffect(() => {
+  //   if (changeInfo.logs.length > 0) {
+  //     console.log('Domain state changes:', changeInfo);
+  //   }
+  // }, [changeInfo]);
 
   if (!isOpen) return null;
 
   return (
     <div className="domain-state-panel open">
       <div className="domain-state-toggle-container">
-        <div className="domain-state-header-title">Domain State</div>
+        <div className="domain-state-header-title">
+          Domain State as of {currentSnapshot ? new Date(currentSnapshot.timestamp).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '') : ''}
+        </div>
         {onNext && onPrev && (
           <div className="domain-state-nav-buttons">
             <button

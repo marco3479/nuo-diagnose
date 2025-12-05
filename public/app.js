@@ -17119,7 +17119,7 @@ var require_jsx_dev_runtime = __commonJS((exports, module) => {
 });
 
 // src_ui/app.tsx
-var import_react4 = __toESM(require_react(), 1);
+var import_react5 = __toESM(require_react(), 1);
 var import_client = __toESM(require_client(), 1);
 
 // assert.ts
@@ -17419,7 +17419,11 @@ function Controls({
   theme,
   setTheme,
   domainStatePanelOpen,
-  setDomainStatePanelOpen
+  setDomainStatePanelOpen,
+  mainViewMode,
+  setMainViewMode,
+  selectedServer,
+  onFilesViewClick
 }) {
   return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
     className: "controls",
@@ -17524,29 +17528,229 @@ function Controls({
             }, undefined, false, undefined, this)
           ]
         }, undefined, true, undefined, this),
-        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
-          onClick: () => setDomainStatePanelOpen(!domainStatePanelOpen),
-          style: {
-            marginLeft: "auto",
-            fontSize: 13,
-            padding: "6px 12px",
-            fontWeight: 500
-          },
-          title: "Toggle Domain State panel",
+        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+          style: { display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" },
           children: [
-            domainStatePanelOpen ? "Hide" : "Show",
-            " Domain State"
+            mainViewMode === "timeline" && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+              onClick: () => setDomainStatePanelOpen(!domainStatePanelOpen),
+              style: {
+                padding: "6px 12px",
+                background: "var(--bg-secondary)",
+                border: "none",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+              },
+              title: `${domainStatePanelOpen ? "Hide" : "Show"} Domain State panel`,
+              children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("svg", {
+                width: "16",
+                height: "16",
+                viewBox: "0 0 16 16",
+                fill: "none",
+                stroke: "currentColor",
+                strokeWidth: "1.5",
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("rect", {
+                    x: "2",
+                    y: "10",
+                    width: "3",
+                    height: "4"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("rect", {
+                    x: "6.5",
+                    y: "6",
+                    width: "3",
+                    height: "8"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("rect", {
+                    x: "11",
+                    y: "3",
+                    width: "3",
+                    height: "11"
+                  }, undefined, false, undefined, this)
+                ]
+              }, undefined, true, undefined, this)
+            }, undefined, false, undefined, this),
+            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+              style: { display: "flex", background: "var(--bg-secondary)", borderRadius: 4, padding: 2 },
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                  onClick: () => setMainViewMode("timeline"),
+                  style: {
+                    background: mainViewMode === "timeline" ? "var(--button-bg)" : "transparent",
+                    color: mainViewMode === "timeline" ? "var(--text-primary)" : "var(--text-muted)",
+                    border: "none",
+                    padding: "6px 12px",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  },
+                  title: "Timeline view",
+                  children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("svg", {
+                    width: "16",
+                    height: "16",
+                    viewBox: "0 0 16 16",
+                    fill: "none",
+                    stroke: "currentColor",
+                    strokeWidth: "1.5",
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("polyline", {
+                        points: "2,12 5,8 8,10 11,4 14,6",
+                        strokeLinecap: "round",
+                        strokeLinejoin: "round"
+                      }, undefined, false, undefined, this),
+                      /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                        x1: "2",
+                        y1: "14",
+                        x2: "14",
+                        y2: "14",
+                        strokeLinecap: "round"
+                      }, undefined, false, undefined, this)
+                    ]
+                  }, undefined, true, undefined, this)
+                }, undefined, false, undefined, this),
+                /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+                  onClick: () => {
+                    setMainViewMode("files");
+                    if (loadMode === "nuosupport" && selectedServer) {
+                      onFilesViewClick();
+                    }
+                  },
+                  disabled: loadMode !== "nuosupport" || !selectedServer,
+                  style: {
+                    background: mainViewMode === "files" ? "var(--button-bg)" : "transparent",
+                    color: mainViewMode === "files" ? "var(--text-primary)" : "var(--text-muted)",
+                    border: "none",
+                    padding: "6px 12px",
+                    borderRadius: 3,
+                    cursor: loadMode !== "nuosupport" || !selectedServer ? "not-allowed" : "pointer",
+                    opacity: loadMode !== "nuosupport" || !selectedServer ? 0.5 : 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  },
+                  title: "Files view",
+                  children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("svg", {
+                    width: "16",
+                    height: "16",
+                    viewBox: "0 0 16 16",
+                    fill: "none",
+                    stroke: "currentColor",
+                    strokeWidth: "1.5",
+                    children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("path", {
+                      d: "M2 2 L6 2 L8 4 L14 4 L14 14 L2 14 Z",
+                      strokeLinecap: "round",
+                      strokeLinejoin: "round"
+                    }, undefined, false, undefined, this)
+                  }, undefined, false, undefined, this)
+                }, undefined, false, undefined, this)
+              ]
+            }, undefined, true, undefined, this),
+            /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+              onClick: () => setTheme(theme === "dark" ? "light" : "dark"),
+              style: {
+                background: "var(--bg-secondary)",
+                border: "none",
+                borderRadius: 4,
+                padding: "6px 12px",
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+              },
+              title: `Switch to ${theme === "dark" ? "light" : "dark"} theme`,
+              children: theme === "dark" ? /* @__PURE__ */ jsx_dev_runtime.jsxDEV("svg", {
+                width: "16",
+                height: "16",
+                viewBox: "0 0 16 16",
+                fill: "none",
+                stroke: "currentColor",
+                strokeWidth: "1.5",
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("circle", {
+                    cx: "8",
+                    cy: "8",
+                    r: "3"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                    x1: "8",
+                    y1: "1",
+                    x2: "8",
+                    y2: "2.5",
+                    strokeLinecap: "round"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                    x1: "8",
+                    y1: "13.5",
+                    x2: "8",
+                    y2: "15",
+                    strokeLinecap: "round"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                    x1: "15",
+                    y1: "8",
+                    x2: "13.5",
+                    y2: "8",
+                    strokeLinecap: "round"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                    x1: "2.5",
+                    y1: "8",
+                    x2: "1",
+                    y2: "8",
+                    strokeLinecap: "round"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                    x1: "12.5",
+                    y1: "3.5",
+                    x2: "11.5",
+                    y2: "4.5",
+                    strokeLinecap: "round"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                    x1: "4.5",
+                    y1: "11.5",
+                    x2: "3.5",
+                    y2: "12.5",
+                    strokeLinecap: "round"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                    x1: "12.5",
+                    y1: "12.5",
+                    x2: "11.5",
+                    y2: "11.5",
+                    strokeLinecap: "round"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime.jsxDEV("line", {
+                    x1: "4.5",
+                    y1: "4.5",
+                    x2: "3.5",
+                    y2: "3.5",
+                    strokeLinecap: "round"
+                  }, undefined, false, undefined, this)
+                ]
+              }, undefined, true, undefined, this) : /* @__PURE__ */ jsx_dev_runtime.jsxDEV("svg", {
+                width: "16",
+                height: "16",
+                viewBox: "0 0 16 16",
+                fill: "none",
+                stroke: "currentColor",
+                strokeWidth: "1.5",
+                children: /* @__PURE__ */ jsx_dev_runtime.jsxDEV("path", {
+                  d: "M 14 9 A 6 6 0 1 1 7 2 A 5 5 0 0 0 14 9 Z",
+                  strokeLinecap: "round",
+                  strokeLinejoin: "round"
+                }, undefined, false, undefined, this)
+              }, undefined, false, undefined, this)
+            }, undefined, false, undefined, this)
           ]
-        }, undefined, true, undefined, this),
-        /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
-          onClick: () => setTheme(theme === "dark" ? "light" : "dark"),
-          style: {
-            justifySelf: "flex-end",
-            fontSize: 16
-          },
-          title: `Switch to ${theme === "dark" ? "light" : "dark"} theme`,
-          children: theme === "dark" ? "◐" : "◑"
-        }, undefined, false, undefined, this)
+        }, undefined, true, undefined, this)
       ]
     }, undefined, true, undefined, this)
   }, undefined, false, undefined, this);
@@ -18953,6 +19157,7 @@ ${assertEvent.message}`;
   }, undefined, true, undefined, this);
 }
 // src_ui/components/LogPanel.tsx
+var import_react2 = __toESM(require_react(), 1);
 var jsx_dev_runtime10 = __toESM(require_jsx_dev_runtime(), 1);
 function LogPanel({
   selectedSid,
@@ -18978,6 +19183,7 @@ function LogPanel({
   rangeStart,
   rangeEnd
 }) {
+  const [viewMode, setViewMode] = import_react2.useState("ui");
   if (selectedSid === null && selectedDb === null && selectedAp === null && !selectedUnclassified) {
     return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
       style: {
@@ -19064,6 +19270,7 @@ function UnclassifiedPanel({
   rangeStart,
   rangeEnd
 }) {
+  const [viewMode, setViewMode] = import_react2.useState("ui");
   const filteredEvents = rangeStart !== null && rangeEnd !== null ? unclassifiedEvents.filter((e) => e.ts >= rangeStart && e.ts <= rangeEnd) : unclassifiedEvents;
   const eventTimeline = (() => {
     if (filteredEvents.length === 0)
@@ -19096,6 +19303,8 @@ function UnclassifiedPanel({
           unclassifiedEvents.map((ev, idx) => {
             const pos = maxTs > minTs ? (ev.ts - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
             const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+            const rawLog = ev.raw ?? ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
             return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
               title: ev.iso,
               style: {
@@ -19104,7 +19313,7 @@ function UnclassifiedPanel({
                 top: "50%",
                 width: isSelected ? 12 : 8,
                 height: isSelected ? 12 : 8,
-                background: isSelected ? "#b380ff" : "#9966ff",
+                background: isSelected ? hasError ? "#ff7070" : "#b380ff" : hasError ? "#ff5050" : "#9966ff",
                 transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
                 cursor: "pointer",
                 border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
@@ -19140,49 +19349,115 @@ function UnclassifiedPanel({
             style: { fontWeight: 600 },
             children: "Logs - Unclassified"
           }, undefined, false, undefined, this),
-          /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
-            onClick: () => {
-              setSelectedUnclassified(false);
-              setSelectedAp(null);
-            },
-            style: {
-              background: "var(--button-bg)",
-              color: "var(--text-muted)",
-              border: "none",
-              padding: "6px 8px",
-              borderRadius: 4,
-              cursor: "pointer"
-            },
-            children: "Close"
-          }, undefined, false, undefined, this)
+          /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            style: { display: "flex", gap: 8, alignItems: "center" },
+            children: [
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+                style: { display: "flex", background: "var(--bg-secondary)", borderRadius: 4, padding: 2 },
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                    onClick: () => setViewMode("ui"),
+                    style: {
+                      background: viewMode === "ui" ? "var(--button-bg)" : "transparent",
+                      color: viewMode === "ui" ? "var(--text-primary)" : "var(--text-muted)",
+                      border: "none",
+                      padding: "4px 12px",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 500
+                    },
+                    children: "UI"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                    onClick: () => setViewMode("text"),
+                    style: {
+                      background: viewMode === "text" ? "var(--button-bg)" : "transparent",
+                      color: viewMode === "text" ? "var(--text-primary)" : "var(--text-muted)",
+                      border: "none",
+                      padding: "4px 12px",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 500
+                    },
+                    children: "Text"
+                  }, undefined, false, undefined, this)
+                ]
+              }, undefined, true, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                onClick: () => {
+                  setSelectedUnclassified(false);
+                  setSelectedAp(null);
+                },
+                style: {
+                  background: "var(--button-bg)",
+                  color: "var(--text-muted)",
+                  border: "none",
+                  padding: "6px 8px",
+                  borderRadius: 4,
+                  cursor: "pointer"
+                },
+                children: "Close"
+              }, undefined, false, undefined, this)
+            ]
+          }, undefined, true, undefined, this)
         ]
       }, undefined, true, undefined, this),
       eventTimeline,
       /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
         style: { maxHeight: 480, overflow: "auto" },
-        children: filteredEvents.map((ev, idx) => /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
-          className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
-          onClick: () => {
-            setFocusedEventIndex(idx);
-            setPanelFocus("events");
-          },
-          style: {
-            padding: "6px 8px",
-            borderBottom: "1px solid rgba(255,255,255,0.02)",
-            cursor: "pointer",
-            background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : undefined
-          },
-          children: [
-            /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
-              style: { fontSize: 12, color: "var(--text-muted)" },
-              children: ev.iso
-            }, undefined, false, undefined, this),
-            /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
-              style: { fontSize: 13, color: "var(--text-primary)", whiteSpace: "pre-wrap" },
-              children: ev.raw ?? ev.message
+        children: viewMode === "text" ? filteredEvents.map((ev, idx) => {
+          const rawLog = ev.raw ?? ev.message;
+          const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+          return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+            onClick: () => {
+              setFocusedEventIndex(idx);
+              setPanelFocus("events");
+            },
+            style: {
+              padding: "6px 8px",
+              borderBottom: "1px solid rgba(255,255,255,0.02)",
+              cursor: "pointer",
+              background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : hasError ? "rgba(255, 80, 80, 0.08)" : undefined,
+              borderLeft: hasError ? "3px solid rgba(255, 80, 80, 0.5)" : undefined,
+              fontFamily: "monospace",
+              fontSize: 12
+            },
+            children: /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+              style: { color: hasError ? "#ffb3b3" : "var(--text-primary)", whiteSpace: "pre-wrap" },
+              children: rawLog
             }, undefined, false, undefined, this)
-          ]
-        }, idx, true, undefined, this))
+          }, idx, false, undefined, this);
+        }) : filteredEvents.map((ev, idx) => {
+          const rawLog = ev.raw ?? ev.message;
+          const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+          return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+            onClick: () => {
+              setFocusedEventIndex(idx);
+              setPanelFocus("events");
+            },
+            style: {
+              padding: "6px 8px",
+              borderBottom: "1px solid rgba(255,255,255,0.02)",
+              cursor: "pointer",
+              background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : hasError ? "rgba(255, 80, 80, 0.08)" : undefined,
+              borderLeft: hasError ? "3px solid rgba(255, 80, 80, 0.5)" : undefined
+            },
+            children: [
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+                style: { fontSize: 12, color: "var(--text-muted)" },
+                children: ev.iso
+              }, undefined, false, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+                style: { fontSize: 13, color: hasError ? "#ffb3b3" : "var(--text-primary)", whiteSpace: "pre-wrap" },
+                children: rawLog
+              }, undefined, false, undefined, this)
+            ]
+          }, idx, true, undefined, this);
+        })
       }, undefined, false, undefined, this)
     ]
   }, undefined, true, undefined, this);
@@ -19200,6 +19475,7 @@ function DatabasePanel({
   rangeStart,
   rangeEnd
 }) {
+  const [viewMode, setViewMode] = import_react2.useState("ui");
   const dbStateEvents = dbStates[selectedDb] || [];
   const dbSpecificEvents = databaseEvents.filter((e) => {
     const msg = e.message ?? "";
@@ -19308,27 +19584,86 @@ function DatabasePanel({
               selectedDb
             ]
           }, undefined, true, undefined, this),
-          /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
-            onClick: () => {
-              setSelectedDb(null);
-              setSelectedAp(null);
-            },
-            style: {
-              background: "var(--button-bg)",
-              color: "var(--text-muted)",
-              border: "none",
-              padding: "6px 8px",
-              borderRadius: 4,
-              cursor: "pointer"
-            },
-            children: "Close"
-          }, undefined, false, undefined, this)
+          /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            style: { display: "flex", gap: 8, alignItems: "center" },
+            children: [
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+                style: { display: "flex", background: "var(--bg-secondary)", borderRadius: 4, padding: 2 },
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                    onClick: () => setViewMode("ui"),
+                    style: {
+                      background: viewMode === "ui" ? "var(--button-bg)" : "transparent",
+                      color: viewMode === "ui" ? "var(--text-primary)" : "var(--text-muted)",
+                      border: "none",
+                      padding: "4px 12px",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 500
+                    },
+                    children: "UI"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                    onClick: () => setViewMode("text"),
+                    style: {
+                      background: viewMode === "text" ? "var(--button-bg)" : "transparent",
+                      color: viewMode === "text" ? "var(--text-primary)" : "var(--text-muted)",
+                      border: "none",
+                      padding: "4px 12px",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 500
+                    },
+                    children: "Text"
+                  }, undefined, false, undefined, this)
+                ]
+              }, undefined, true, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                onClick: () => {
+                  setSelectedDb(null);
+                  setSelectedAp(null);
+                },
+                style: {
+                  background: "var(--button-bg)",
+                  color: "var(--text-muted)",
+                  border: "none",
+                  padding: "6px 8px",
+                  borderRadius: 4,
+                  cursor: "pointer"
+                },
+                children: "Close"
+              }, undefined, false, undefined, this)
+            ]
+          }, undefined, true, undefined, this)
         ]
       }, undefined, true, undefined, this),
       eventTimeline,
       /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
         style: { maxHeight: 480, overflow: "auto" },
-        children: filteredDbEvents.map((seg, idx) => {
+        children: viewMode === "text" ? filteredDbEvents.map((seg, idx) => {
+          const rawLog = seg.message;
+          return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+            onClick: () => {
+              setFocusedEventIndex(idx);
+              setPanelFocus("events");
+            },
+            style: {
+              padding: "6px 8px",
+              borderBottom: "1px solid rgba(255,255,255,0.02)",
+              cursor: "pointer",
+              background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : undefined,
+              fontFamily: "monospace",
+              fontSize: 12
+            },
+            children: /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+              style: { color: "var(--text-primary)", whiteSpace: "pre-wrap" },
+              children: rawLog
+            }, undefined, false, undefined, this)
+          }, idx, false, undefined, this);
+        }) : filteredDbEvents.map((seg, idx) => {
           const isDbUpdate = /Updated database from DatabaseInfo/.test(seg.message);
           return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
             className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
@@ -19472,6 +19807,7 @@ function ProcessPanel({
   rangeStart,
   rangeEnd
 }) {
+  const [viewMode, setViewMode] = import_react2.useState("ui");
   const instsForSid = rowsBySid[String(selectedSid)] || [];
   const related = events.filter((e) => {
     if (e.sid === selectedSid)
@@ -19541,6 +19877,8 @@ function ProcessPanel({
           filteredEvents.map((ev, idx) => {
             const pos = maxTs > minTs ? (ev.ts - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
             const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+            const rawLog = ev.raw || ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
             return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
               title: ev.iso,
               style: {
@@ -19549,7 +19887,7 @@ function ProcessPanel({
                 top: "50%",
                 width: isSelected ? 12 : 8,
                 height: isSelected ? 12 : 8,
-                background: isSelected ? ev.type === "frp" ? "#ff7070" : "#43bdff" : ev.type === "frp" ? "#ff5050" : "#2b9df4",
+                background: isSelected ? hasError ? "#ff7070" : ev.type === "frp" ? "#ff7070" : "#43bdff" : hasError ? "#ff5050" : ev.type === "frp" ? "#ff5050" : "#2b9df4",
                 transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
                 cursor: "pointer",
                 border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
@@ -19606,6 +19944,7 @@ function ProcessPanel({
     const reasonMatch = isRemoveNode ? logMessage.match(/reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/) : null;
     const isGraceful = reasonMatch && /Gracefully shutdown engine/i.test(reasonMatch[0]);
     const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+    const hasErrorStacktrace = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
     const isDbUpdate = /Updated database from DatabaseInfo/.test(logMessage);
     const dbDiff = ev.dbDiff;
     elements.push(/* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
@@ -19618,7 +19957,8 @@ function ProcessPanel({
         padding: "6px 8px",
         borderBottom: "1px solid rgba(255,255,255,0.02)",
         cursor: "pointer",
-        background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : ev.type === "frp" ? "rgba(255, 80, 80, 0.05)" : undefined
+        background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : ev.type === "frp" ? "rgba(255, 80, 80, 0.05)" : hasErrorStacktrace ? "rgba(255, 80, 80, 0.08)" : undefined,
+        borderLeft: hasErrorStacktrace ? "3px solid rgba(255, 80, 80, 0.5)" : undefined
       },
       children: [
         /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
@@ -19670,7 +20010,7 @@ function ProcessPanel({
                 children: loggerName
               }, undefined, false, undefined, this),
               /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
-                style: { marginTop: 4, color: "var(--text-primary)" },
+                style: { marginTop: 4, color: hasErrorStacktrace ? "#ffb3b3" : "var(--text-primary)" },
                 children: isDbUpdate && dbDiff ? /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
                   children: [
                     logMessage,
@@ -19805,27 +20145,103 @@ function ProcessPanel({
               selectedSid
             ]
           }, undefined, true, undefined, this),
-          /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
-            onClick: () => {
-              setSelectedSid(null);
-              setSelectedAp(null);
-            },
-            style: {
-              background: "var(--button-bg)",
-              color: "var(--text-muted)",
-              border: "none",
-              padding: "6px 8px",
-              borderRadius: 4,
-              cursor: "pointer"
-            },
-            children: "Close"
-          }, undefined, false, undefined, this)
+          /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            style: { display: "flex", gap: 8, alignItems: "center" },
+            children: [
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+                style: { display: "flex", background: "var(--bg-secondary)", borderRadius: 4, padding: 2 },
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                    onClick: () => setViewMode("ui"),
+                    style: {
+                      background: viewMode === "ui" ? "var(--button-bg)" : "transparent",
+                      color: viewMode === "ui" ? "var(--text-primary)" : "var(--text-muted)",
+                      border: "none",
+                      padding: "4px 12px",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 500
+                    },
+                    children: "UI"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                    onClick: () => setViewMode("text"),
+                    style: {
+                      background: viewMode === "text" ? "var(--button-bg)" : "transparent",
+                      color: viewMode === "text" ? "var(--text-primary)" : "var(--text-muted)",
+                      border: "none",
+                      padding: "4px 12px",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 500
+                    },
+                    children: "Text"
+                  }, undefined, false, undefined, this)
+                ]
+              }, undefined, true, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                onClick: () => {
+                  setSelectedSid(null);
+                  setSelectedAp(null);
+                },
+                style: {
+                  background: "var(--button-bg)",
+                  color: "var(--text-muted)",
+                  border: "none",
+                  padding: "6px 8px",
+                  borderRadius: 4,
+                  cursor: "pointer"
+                },
+                children: "Close"
+              }, undefined, false, undefined, this)
+            ]
+          }, undefined, true, undefined, this)
         ]
       }, undefined, true, undefined, this),
       eventTimeline,
       /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
         style: { maxHeight: 480, overflow: "auto" },
-        children: elements
+        children: viewMode === "text" ? filteredEvents.map((ev, idx) => {
+          const rawLog = ev.raw || ev.message;
+          const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+          return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+            onClick: () => {
+              setFocusedEventIndex(idx);
+              setPanelFocus("events");
+            },
+            style: {
+              padding: "6px 8px",
+              borderBottom: "1px solid rgba(255,255,255,0.02)",
+              cursor: "pointer",
+              background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : ev.type === "frp" ? "rgba(255, 80, 80, 0.05)" : hasError ? "rgba(255, 80, 80, 0.08)" : undefined,
+              borderLeft: hasError ? "3px solid rgba(255, 80, 80, 0.5)" : undefined,
+              fontFamily: "monospace",
+              fontSize: 12
+            },
+            children: [
+              ev.type === "frp" && /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+                style: {
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "#ff7070",
+                  background: "rgba(255, 80, 80, 0.1)",
+                  padding: "2px 6px",
+                  borderRadius: 3,
+                  display: "inline-block",
+                  marginBottom: 4
+                },
+                children: "FAILURE PROTOCOL"
+              }, undefined, false, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+                style: { color: hasError ? "#ffb3b3" : "var(--text-primary)", whiteSpace: "pre-wrap" },
+                children: rawLog
+              }, undefined, false, undefined, this)
+            ]
+          }, idx, true, undefined, this);
+        }) : elements
       }, undefined, false, undefined, this)
     ]
   }, undefined, true, undefined, this);
@@ -19844,6 +20260,7 @@ function ApPanel({
   rangeStart,
   rangeEnd
 }) {
+  const [viewMode, setViewMode] = import_react2.useState("ui");
   const apEvents = processEvents.filter((e) => e.sid === null);
   const filteredEvents = rangeStart !== null && rangeEnd !== null ? apEvents.filter((e) => e.ts >= rangeStart && e.ts <= rangeEnd) : apEvents;
   const eventTimeline = (() => {
@@ -19877,6 +20294,8 @@ function ApPanel({
           filteredEvents.map((ev, idx) => {
             const pos = maxTs > minTs ? (ev.ts - minTs) / (maxTs - minTs) * timelineWidth : timelineWidth / 2;
             const isSelected = panelFocus === "events" && focusedEventIndex === idx;
+            const rawLog = ev.raw || ev.message;
+            const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
             return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
               title: ev.iso,
               style: {
@@ -19885,7 +20304,7 @@ function ApPanel({
                 top: "50%",
                 width: isSelected ? 12 : 8,
                 height: isSelected ? 12 : 8,
-                background: isSelected ? "#43bdff" : "#2b9df4",
+                background: isSelected ? hasError ? "#ff7070" : "#43bdff" : hasError ? "#ff5050" : "#2b9df4",
                 transform: "translateX(-50%) translateY(-50%) rotate(45deg)",
                 cursor: "pointer",
                 border: isSelected ? "2px solid #fff" : "1px solid rgba(255, 255, 255, 0.3)",
@@ -19915,6 +20334,7 @@ function ApPanel({
     let threadInfo = "";
     let loggerName = "";
     let logMessage = ev.message;
+    const hasErrorStacktrace = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
     if (logMatch) {
       logLevel = logMatch[2];
       threadInfo = logMatch[3];
@@ -19931,7 +20351,8 @@ function ApPanel({
         padding: "6px 8px",
         borderBottom: "1px solid rgba(255,255,255,0.02)",
         cursor: "pointer",
-        background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : undefined
+        background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : hasErrorStacktrace ? "rgba(255, 80, 80, 0.08)" : undefined,
+        borderLeft: hasErrorStacktrace ? "3px solid rgba(255, 80, 80, 0.5)" : undefined
       },
       children: [
         /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
@@ -19939,7 +20360,7 @@ function ApPanel({
           children: ev.iso
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
-          style: { fontSize: 13, color: "var(--text-primary)", whiteSpace: "pre-wrap" },
+          style: { fontSize: 13, color: hasErrorStacktrace ? "#ffb3b3" : "var(--text-primary)", whiteSpace: "pre-wrap" },
           children: logMatch ? /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
             children: [
               /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("span", {
@@ -19993,35 +20414,96 @@ function ApPanel({
             style: { fontWeight: 600 },
             children: "Admin Process Events"
           }, undefined, false, undefined, this),
-          /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
-            onClick: () => {
-              setSelectedAp(null);
-              setSelectedSid(null);
-              setSelectedDb(null);
-              setSelectedUnclassified(false);
-            },
-            style: {
-              background: "var(--button-bg)",
-              color: "var(--text-muted)",
-              border: "none",
-              padding: "6px 8px",
-              borderRadius: 4,
-              cursor: "pointer"
-            },
-            children: "Close"
-          }, undefined, false, undefined, this)
+          /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            style: { display: "flex", gap: 8, alignItems: "center" },
+            children: [
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+                style: { display: "flex", background: "var(--bg-secondary)", borderRadius: 4, padding: 2 },
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                    onClick: () => setViewMode("ui"),
+                    style: {
+                      background: viewMode === "ui" ? "var(--button-bg)" : "transparent",
+                      color: viewMode === "ui" ? "var(--text-primary)" : "var(--text-muted)",
+                      border: "none",
+                      padding: "4px 12px",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 500
+                    },
+                    children: "UI"
+                  }, undefined, false, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                    onClick: () => setViewMode("text"),
+                    style: {
+                      background: viewMode === "text" ? "var(--button-bg)" : "transparent",
+                      color: viewMode === "text" ? "var(--text-primary)" : "var(--text-muted)",
+                      border: "none",
+                      padding: "4px 12px",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 500
+                    },
+                    children: "Text"
+                  }, undefined, false, undefined, this)
+                ]
+              }, undefined, true, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("button", {
+                onClick: () => {
+                  setSelectedAp(null);
+                  setSelectedSid(null);
+                  setSelectedDb(null);
+                  setSelectedUnclassified(false);
+                },
+                style: {
+                  background: "var(--button-bg)",
+                  color: "var(--text-muted)",
+                  border: "none",
+                  padding: "6px 8px",
+                  borderRadius: 4,
+                  cursor: "pointer"
+                },
+                children: "Close"
+              }, undefined, false, undefined, this)
+            ]
+          }, undefined, true, undefined, this)
         ]
       }, undefined, true, undefined, this),
       eventTimeline,
       /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
         style: { maxHeight: 480, overflow: "auto" },
-        children: elements
+        children: viewMode === "text" ? filteredEvents.map((ev, idx) => {
+          const rawLog = ev.raw || ev.message;
+          const hasError = /ASSERT:|\*\*\* Stacktrace:/.test(rawLog);
+          return /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+            className: `event-item${panelFocus === "events" && focusedEventIndex === idx ? " focused" : ""}`,
+            onClick: () => {
+              setFocusedEventIndex(idx);
+              setPanelFocus("events");
+            },
+            style: {
+              padding: "6px 8px",
+              borderBottom: "1px solid rgba(255,255,255,0.02)",
+              cursor: "pointer",
+              background: panelFocus === "events" && focusedEventIndex === idx ? "rgba(43, 157, 244, 0.15)" : hasError ? "rgba(255, 80, 80, 0.08)" : undefined,
+              borderLeft: hasError ? "3px solid rgba(255, 80, 80, 0.5)" : undefined,
+              fontFamily: "monospace",
+              fontSize: 12
+            },
+            children: /* @__PURE__ */ jsx_dev_runtime10.jsxDEV("div", {
+              style: { color: hasError ? "#ffb3b3" : "var(--text-primary)", whiteSpace: "pre-wrap" },
+              children: rawLog
+            }, undefined, false, undefined, this)
+          }, idx, false, undefined, this);
+        }) : elements
       }, undefined, false, undefined, this)
     ]
   }, undefined, true, undefined, this);
 }
 // src_ui/components/TimePointSlider.tsx
-var import_react2 = __toESM(require_react(), 1);
+var import_react3 = __toESM(require_react(), 1);
 var jsx_dev_runtime11 = __toESM(require_jsx_dev_runtime(), 1);
 function TimePointSlider({
   globalStart,
@@ -20034,7 +20516,7 @@ function TimePointSlider({
 }) {
   const duration = globalEnd - globalStart;
   const position = duration > 0 ? (currentTime - globalStart) / duration * 100 : 0;
-  const [isDragging, setIsDragging] = import_react2.default.useState(false);
+  const [isDragging, setIsDragging] = import_react3.default.useState(false);
   const handleClick = (e) => {
     const target = e.currentTarget;
     const rect = target.getBoundingClientRect();
@@ -20047,7 +20529,7 @@ function TimePointSlider({
     setIsDragging(true);
     e.preventDefault();
   };
-  import_react2.default.useEffect(() => {
+  import_react3.default.useEffect(() => {
     if (!isDragging)
       return;
     const handleMouseMove = (e) => {
@@ -20146,7 +20628,7 @@ function TimePointSlider({
   }, undefined, false, undefined, this);
 }
 // src_ui/components/DomainStatePanel.tsx
-var import_react3 = __toESM(require_react(), 1);
+var import_react4 = __toESM(require_react(), 1);
 var jsx_dev_runtime12 = __toESM(require_jsx_dev_runtime(), 1);
 function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, onClose, onNext, onPrev, hasNext, hasPrev }) {
   const domainState = currentSnapshot?.state || null;
@@ -20154,13 +20636,13 @@ function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, onClose, 
   const followers = domainState?.servers.filter((s) => s.role === "FOLLOWER") || [];
   const otherServers = domainState?.servers.filter((s) => s.role !== "LEADER" && s.role !== "FOLLOWER") || [];
   const nonLeaderServers = [...followers, ...otherServers];
-  const ghostServers = import_react3.default.useMemo(() => {
+  const ghostServers = import_react4.default.useMemo(() => {
     if (!previousSnapshot || !currentSnapshot)
       return [];
     const currentServerIds = new Set(currentSnapshot.state.servers.map((s) => s.serverId));
     return previousSnapshot.state.servers.filter((s) => !currentServerIds.has(s.serverId) && s.role !== "LEADER");
   }, [previousSnapshot, currentSnapshot]);
-  const allNonLeaderServers = import_react3.default.useMemo(() => {
+  const allNonLeaderServers = import_react4.default.useMemo(() => {
     if (!previousSnapshot) {
       return nonLeaderServers;
     }
@@ -20223,10 +20705,14 @@ function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, onClose, 
     return ghostProcesses;
   };
   const serverCount = allNonLeaderServers.length;
-  const circleSize = Math.min(600, Math.max(300, 250 + serverCount * 40));
+  const baseSize = leader ? 400 : 300;
+  const sizeIncrement = leader ? 50 : 40;
+  const maxSize = leader ? 800 : 600;
+  const circleSize = Math.min(maxSize, Math.max(baseSize, baseSize + serverCount * sizeIncrement));
   const centerX = circleSize / 2;
   const centerY = circleSize / 2;
-  const radius = circleSize / 2 - 80;
+  const marginForNode = 80;
+  const radius = leader ? circleSize / 2 - marginForNode - 20 : circleSize / 2 - marginForNode;
   const getServerPosition = (index, total) => {
     const angle = index * 2 * Math.PI / total - Math.PI / 2;
     return {
@@ -20238,7 +20724,7 @@ function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, onClose, 
   const connectedServers = domainState?.servers.filter((s) => s.status.includes("Connected")).length || 0;
   const quorumNeeded = totalServers === 1 ? 2 : Math.floor(totalServers / 2) + 1;
   const hasQuorum = connectedServers >= quorumNeeded;
-  const changeInfo = import_react3.default.useMemo(() => {
+  const changeInfo = import_react4.default.useMemo(() => {
     if (!currentSnapshot || !previousSnapshot) {
       return {
         logs: [],
@@ -20337,11 +20823,6 @@ function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, onClose, 
       changedProcessIds
     };
   }, [currentSnapshot, previousSnapshot]);
-  import_react3.default.useEffect(() => {
-    if (changeInfo.logs.length > 0) {
-      console.log("Domain state changes:", changeInfo);
-    }
-  }, [changeInfo]);
   if (!isOpen)
     return null;
   return /* @__PURE__ */ jsx_dev_runtime12.jsxDEV("div", {
@@ -20352,8 +20833,11 @@ function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, onClose, 
         children: [
           /* @__PURE__ */ jsx_dev_runtime12.jsxDEV("div", {
             className: "domain-state-header-title",
-            children: "Domain State"
-          }, undefined, false, undefined, this),
+            children: [
+              "Domain State as of ",
+              currentSnapshot ? new Date(currentSnapshot.timestamp).toISOString().replace("T", " ").replace(/\.\d+Z$/, "") : ""
+            ]
+          }, undefined, true, undefined, this),
           onNext && onPrev && /* @__PURE__ */ jsx_dev_runtime12.jsxDEV("div", {
             className: "domain-state-nav-buttons",
             children: [
@@ -20638,57 +21122,119 @@ function DomainStatePanel({ currentSnapshot, previousSnapshot, isOpen, onClose, 
 // src_ui/app.tsx
 var jsx_dev_runtime13 = __toESM(require_jsx_dev_runtime(), 1);
 function StackApp() {
-  const [path, setPath] = import_react4.useState("tests/mock/nuoadmin.log");
+  const [path, setPath] = import_react5.useState("tests/mock/nuoadmin.log");
   const initialMode = window.location.pathname === "/" || window.location.pathname.startsWith("/nuosupport") ? "nuosupport" : "file";
-  const [loadMode, setLoadMode] = import_react4.useState(initialMode);
-  const [selectedTicket, setSelectedTicket] = import_react4.useState("");
-  const [diagnosePackages, setDiagnosePackages] = import_react4.useState([]);
-  const [selectedPackage, setSelectedPackage] = import_react4.useState("");
-  const [servers, setServers] = import_react4.useState([]);
-  const [selectedServer, setSelectedServer] = import_react4.useState("");
-  const [serverTimeRanges, setServerTimeRanges] = import_react4.useState([]);
-  const [instances, setInstances] = import_react4.useState([]);
-  const [events, setEvents] = import_react4.useState([]);
-  const [dbStates, setDbStates] = import_react4.useState({});
-  const [failureProtocols, setFailureProtocols] = import_react4.useState([]);
-  const [selectedSid, setSelectedSid] = import_react4.useState(null);
-  const [selectedDb, setSelectedDb] = import_react4.useState(null);
-  const [selectedAp, setSelectedAp] = import_react4.useState(null);
-  const [selectedUnclassified, setSelectedUnclassified] = import_react4.useState(false);
-  const [rangeStart, setRangeStart] = import_react4.useState(null);
-  const [rangeEnd, setRangeEnd] = import_react4.useState(null);
-  const [globalStart, setGlobalStart] = import_react4.useState(Date.now());
-  const [globalEnd, setGlobalEnd] = import_react4.useState(Date.now() + 1);
-  const [loading, setLoading] = import_react4.useState(false);
-  const [loadedServer, setLoadedServer] = import_react4.useState("");
-  const [filterType, setFilterType] = import_react4.useState("ALL");
-  const [filterServers, setFilterServers] = import_react4.useState(new Set);
-  const [filterSids, setFilterSids] = import_react4.useState(new Set);
-  const [sortKey, setSortKey] = import_react4.useState("sid");
-  const [sortDir, setSortDir] = import_react4.useState("asc");
-  const [cursorX, setCursorX] = import_react4.useState(null);
-  const [dragging, setDragging] = import_react4.useState(null);
-  const [dragStartX, setDragStartX] = import_react4.useState(0);
-  const [dragStartRange, setDragStartRange] = import_react4.useState({ start: 0, end: 0 });
-  const [focusedRowIndex, setFocusedRowIndex] = import_react4.useState(-1);
-  const [focusedEventIndex, setFocusedEventIndex] = import_react4.useState(-1);
-  const [panelFocus, setPanelFocus] = import_react4.useState("timeline");
-  const [focusedTimelineItem, setFocusedTimelineItem] = import_react4.useState(null);
-  const [hoveredBar, setHoveredBar] = import_react4.useState(null);
-  const [apsCollapsed, setApsCollapsed] = import_react4.useState(false);
-  const [serverDropdownOpen, setServerDropdownOpen] = import_react4.useState(false);
-  const [sidDropdownOpen, setSidDropdownOpen] = import_react4.useState(false);
-  const [domainStates, setDomainStates] = import_react4.useState([]);
-  const [currentTimePoint, setCurrentTimePoint] = import_react4.useState(null);
-  const [domainPanelOpen, setDomainPanelOpen] = import_react4.useState(true);
-  const [domainPanelWidth, setDomainPanelWidth] = import_react4.useState(600);
-  const [isResizing, setIsResizing] = import_react4.useState(false);
+  const [loadMode, setLoadMode] = import_react5.useState(initialMode);
+  const [selectedTicket, setSelectedTicket] = import_react5.useState("");
+  const [diagnosePackages, setDiagnosePackages] = import_react5.useState([]);
+  const [selectedPackage, setSelectedPackage] = import_react5.useState("");
+  const [servers, setServers] = import_react5.useState([]);
+  const [selectedServer, setSelectedServer] = import_react5.useState("");
+  const [serverTimeRanges, setServerTimeRanges] = import_react5.useState([]);
+  const [instances, setInstances] = import_react5.useState([]);
+  const [events, setEvents] = import_react5.useState([]);
+  const [dbStates, setDbStates] = import_react5.useState({});
+  const [failureProtocols, setFailureProtocols] = import_react5.useState([]);
+  const [selectedSid, setSelectedSid] = import_react5.useState(null);
+  const [selectedDb, setSelectedDb] = import_react5.useState(null);
+  const [selectedAp, setSelectedAp] = import_react5.useState(null);
+  const [selectedUnclassified, setSelectedUnclassified] = import_react5.useState(false);
+  const [rangeStart, setRangeStart] = import_react5.useState(null);
+  const [rangeEnd, setRangeEnd] = import_react5.useState(null);
+  const [globalStart, setGlobalStart] = import_react5.useState(Date.now());
+  const [globalEnd, setGlobalEnd] = import_react5.useState(Date.now() + 1);
+  const [loading, setLoading] = import_react5.useState(false);
+  const [loadedServer, setLoadedServer] = import_react5.useState("");
+  const [filterType, setFilterType] = import_react5.useState("ALL");
+  const [filterServers, setFilterServers] = import_react5.useState(new Set);
+  const [filterSids, setFilterSids] = import_react5.useState(new Set);
+  const [sortKey, setSortKey] = import_react5.useState("sid");
+  const [sortDir, setSortDir] = import_react5.useState("asc");
+  const [cursorX, setCursorX] = import_react5.useState(null);
+  const [dragging, setDragging] = import_react5.useState(null);
+  const [dragStartX, setDragStartX] = import_react5.useState(0);
+  const [dragStartRange, setDragStartRange] = import_react5.useState({ start: 0, end: 0 });
+  const [focusedRowIndex, setFocusedRowIndex] = import_react5.useState(-1);
+  const [focusedEventIndex, setFocusedEventIndex] = import_react5.useState(-1);
+  const [panelFocus, setPanelFocus] = import_react5.useState("timeline");
+  const [focusedTimelineItem, setFocusedTimelineItem] = import_react5.useState(null);
+  const [hoveredBar, setHoveredBar] = import_react5.useState(null);
+  const [apsCollapsed, setApsCollapsed] = import_react5.useState(false);
+  const [serverDropdownOpen, setServerDropdownOpen] = import_react5.useState(false);
+  const [sidDropdownOpen, setSidDropdownOpen] = import_react5.useState(false);
+  const [domainStates, setDomainStates] = import_react5.useState([]);
+  const [currentTimePoint, setCurrentTimePoint] = import_react5.useState(null);
+  const [domainPanelOpen, setDomainPanelOpen] = import_react5.useState(true);
+  const [domainPanelWidth, setDomainPanelWidth] = import_react5.useState(600);
+  const [isResizing, setIsResizing] = import_react5.useState(false);
+  const [mainViewMode, setMainViewMode] = import_react5.useState("timeline");
+  const [availableFiles, setAvailableFiles] = import_react5.useState([]);
+  const [selectedFile, setSelectedFile] = import_react5.useState(null);
+  const [fileContent, setFileContent] = import_react5.useState("");
+  const [fileListSearch, setFileListSearch] = import_react5.useState("");
+  const [fileContentSearch, setFileContentSearch] = import_react5.useState("");
+  const [currentMatchIndex, setCurrentMatchIndex] = import_react5.useState(0);
+  const [fileSearchResults, setFileSearchResults] = import_react5.useState([]);
+  const [isSearchingFiles, setIsSearchingFiles] = import_react5.useState(false);
+  const [fileSearchRegex, setFileSearchRegex] = import_react5.useState(false);
+  const [fileContentSearchRegex, setFileContentSearchRegex] = import_react5.useState(false);
+  const [contentMatches, setContentMatches] = import_react5.useState([]);
+  const [isCalculatingMatches, setIsCalculatingMatches] = import_react5.useState(false);
   const { theme, setTheme } = useTheme("dark");
   const { mousePos, setMousePos } = useMousePosition();
   const zdTickets = useZdTickets();
   useDropdownOutsideClick(serverDropdownOpen, sidDropdownOpen, setServerDropdownOpen, setSidDropdownOpen);
   useUrlNavigation(loadMode);
-  import_react4.useEffect(() => {
+  import_react5.useEffect(() => {
+    if (!fileListSearch) {
+      setFileSearchResults([]);
+      return;
+    }
+    if (fileListSearch.length < 3) {
+      setFileSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      searchAcrossFiles(fileListSearch);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [fileListSearch, loadMode, selectedTicket, selectedPackage, selectedServer, availableFiles, fileSearchRegex]);
+  import_react5.useEffect(() => {
+    if (!fileContentSearch || !fileContent) {
+      setContentMatches([]);
+      setIsCalculatingMatches(false);
+      return;
+    }
+    setIsCalculatingMatches(true);
+    const timer = setTimeout(() => {
+      const matches = [];
+      if (fileContentSearchRegex) {
+        try {
+          const regex = new RegExp(fileContentSearch, "gi");
+          let match;
+          while ((match = regex.exec(fileContent)) !== null) {
+            matches.push({ index: match.index, length: match[0].length });
+            if (match[0].length === 0) {
+              regex.lastIndex++;
+            }
+          }
+        } catch (e) {}
+      } else {
+        const searchLower = fileContentSearch.toLowerCase();
+        const contentLower = fileContent.toLowerCase();
+        let index = 0;
+        while ((index = contentLower.indexOf(searchLower, index)) !== -1) {
+          matches.push({ index, length: fileContentSearch.length });
+          index += searchLower.length;
+        }
+      }
+      setContentMatches(matches);
+      setCurrentMatchIndex(0);
+      setIsCalculatingMatches(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [fileContentSearch, fileContent, fileContentSearchRegex]);
+  import_react5.useEffect(() => {
     if (!isResizing)
       return;
     document.body.style.userSelect = "none";
@@ -20741,6 +21287,98 @@ function StackApp() {
       setLoading(false);
     }
   }
+  async function loadFileList() {
+    if (loadMode === "nuosupport" && selectedTicket && selectedPackage && selectedServer) {
+      console.log("[loadFileList] Loading files for:", { selectedTicket, selectedPackage, selectedServer });
+      try {
+        const res = await fetch(`/list-files?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}&server=${encodeURIComponent(selectedServer)}`);
+        const json = await res.json();
+        console.log("[loadFileList] Response:", json);
+        if (json.error) {
+          console.error("[loadFileList] Error from server:", json.error);
+          setAvailableFiles([]);
+        } else if (json.files) {
+          console.log("[loadFileList] Setting files:", json.files.length);
+          setAvailableFiles(json.files);
+        }
+      } catch (e) {
+        console.error("[loadFileList] Error loading file list:", e);
+        setAvailableFiles([]);
+      }
+    } else {
+      console.log("[loadFileList] Conditions not met:", { loadMode, selectedTicket, selectedPackage, selectedServer });
+    }
+  }
+  const filteredFiles = fileListSearch && fileSearchResults.length > 0 ? fileSearchResults.map((r) => r.file) : fileListSearch ? [] : availableFiles;
+  async function searchAcrossFiles(searchText) {
+    if (!searchText || loadMode !== "nuosupport" || !selectedTicket || !selectedPackage || !selectedServer) {
+      setFileSearchResults([]);
+      return;
+    }
+    setIsSearchingFiles(true);
+    const results = [];
+    try {
+      for (const file of availableFiles) {
+        const res = await fetch(`/file-content?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}&server=${encodeURIComponent(selectedServer)}&file=${encodeURIComponent(file)}`);
+        const content = await res.text();
+        let matchCount = 0;
+        if (fileSearchRegex) {
+          try {
+            const regex = new RegExp(searchText, "gi");
+            const matches = content.match(regex);
+            matchCount = matches ? matches.length : 0;
+          } catch (e) {}
+        } else {
+          const searchLower = searchText.toLowerCase();
+          const contentLower = content.toLowerCase();
+          let index = 0;
+          while ((index = contentLower.indexOf(searchLower, index)) !== -1) {
+            matchCount++;
+            index += searchLower.length;
+          }
+        }
+        if (matchCount > 0) {
+          results.push({ file, matches: matchCount });
+        }
+      }
+      setFileSearchResults(results);
+    } catch (e) {
+      console.error("[searchAcrossFiles] Error:", e);
+    } finally {
+      setIsSearchingFiles(false);
+    }
+  }
+  async function loadFileContent(filename) {
+    if (loadMode === "nuosupport" && selectedTicket && selectedPackage && selectedServer) {
+      try {
+        const res = await fetch(`/file-content?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}&server=${encodeURIComponent(selectedServer)}&file=${encodeURIComponent(filename)}`);
+        const text = await res.text();
+        setFileContent(text);
+        setSelectedFile(filename);
+        setFileContentSearch("");
+        setCurrentMatchIndex(0);
+      } catch (e) {
+        console.error("Error loading file content:", e);
+      }
+    }
+  }
+  function goToNextMatch() {
+    if (contentMatches.length > 0) {
+      setCurrentMatchIndex((prev) => (prev + 1) % contentMatches.length);
+    }
+  }
+  function goToPrevMatch() {
+    if (contentMatches.length > 0) {
+      setCurrentMatchIndex((prev) => (prev - 1 + contentMatches.length) % contentMatches.length);
+    }
+  }
+  import_react5.useEffect(() => {
+    console.log("[useEffect] Checking if should load files:", { loadMode, selectedServer, mainViewMode, selectedTicket, selectedPackage });
+    if (loadMode === "nuosupport" && selectedTicket && selectedPackage && selectedServer && mainViewMode === "files") {
+      console.log("[useEffect] Triggering loadFileList");
+      loadFileList();
+    }
+  }, [selectedServer, loadMode, mainViewMode, selectedTicket, selectedPackage]);
   async function loadFromNuoSupportHandler() {
     if (!selectedTicket || !selectedPackage || !selectedServer)
       return;
@@ -20798,7 +21436,7 @@ function StackApp() {
     merged.sort((a, b) => a.timestamp - b.timestamp);
     return merged;
   }
-  import_react4.useEffect(() => {
+  import_react5.useEffect(() => {
     const urlPath = window.location.pathname;
     const fullMatch = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
     const packageMatch = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)$/);
@@ -20819,7 +21457,7 @@ function StackApp() {
       }
     }
   }, [zdTickets]);
-  import_react4.useEffect(() => {
+  import_react5.useEffect(() => {
     if (!selectedTicket) {
       setDiagnosePackages([]);
       setSelectedPackage("");
@@ -20843,7 +21481,7 @@ function StackApp() {
       }
     }).catch((e) => console.error("Failed to load packages:", e));
   }, [selectedTicket, loadMode]);
-  import_react4.useEffect(() => {
+  import_react5.useEffect(() => {
     if (!selectedTicket || !selectedPackage) {
       setServers([]);
       setSelectedServer("");
@@ -20887,7 +21525,7 @@ function StackApp() {
       console.error("Server time ranges error:", e);
     });
   }, [selectedTicket, selectedPackage, diagnosePackages, loadMode]);
-  import_react4.useEffect(() => {
+  import_react5.useEffect(() => {
     if (selectedServer && selectedTicket && selectedPackage && loadMode === "nuosupport") {
       const newPath = `/nuosupport/${selectedTicket}/${selectedPackage}/${selectedServer}`;
       window.history.pushState({}, "", newPath);
@@ -20919,7 +21557,7 @@ function StackApp() {
         setCurrentTimePoint(prevState.timestamp);
     }
   };
-  const currentDomainStateSnapshot = import_react4.default.useMemo(() => {
+  const currentDomainStateSnapshot = import_react5.default.useMemo(() => {
     if (!currentTimePoint || domainStates.length === 0)
       return null;
     const statesBeforeOrAt = domainStates.filter((ds) => ds.timestamp <= currentTimePoint);
@@ -20928,7 +21566,7 @@ function StackApp() {
     return statesBeforeOrAt[statesBeforeOrAt.length - 1] || null;
   }, [currentTimePoint, domainStates]);
   const currentDomainState = currentDomainStateSnapshot?.state || null;
-  const previousDomainStateSnapshot = import_react4.default.useMemo(() => {
+  const previousDomainStateSnapshot = import_react5.default.useMemo(() => {
     if (!currentDomainStateSnapshot || domainStates.length === 0)
       return null;
     const currentIndex = domainStates.findIndex((ds) => ds.timestamp === currentDomainStateSnapshot.timestamp);
@@ -20990,7 +21628,7 @@ function StackApp() {
   const addresses = sortAddressesByEarliestStart(groupsByAddress, rowsBySid);
   const allGroupsByAddress = groupInstancesByAddress(allRowsBySid);
   const allAddresses = sortAddressesByEarliestStart(allGroupsByAddress, allRowsBySid);
-  import_react4.useEffect(() => {
+  import_react5.useEffect(() => {
     if (!dragging)
       return;
     const handleMouseMove = (e) => {
@@ -21033,7 +21671,7 @@ function StackApp() {
       document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [dragging, globalStart, globalEnd, rangeStart, rangeEnd, dragStartX, dragStartRange]);
-  import_react4.useEffect(() => {
+  import_react5.useEffect(() => {
     const handleKeyDown = (e) => {
       if (panelFocus === "timeline") {
         const timelineItems = [
@@ -21243,7 +21881,12 @@ function StackApp() {
         theme,
         setTheme,
         domainStatePanelOpen: domainPanelOpen,
-        setDomainStatePanelOpen: setDomainPanelOpen
+        setDomainStatePanelOpen: setDomainPanelOpen,
+        mainViewMode,
+        setMainViewMode,
+        loadMode,
+        selectedServer,
+        onFilesViewClick: loadFileList
       }, undefined, false, undefined, this),
       /* @__PURE__ */ jsx_dev_runtime13.jsxDEV(ServerTimeline, {
         loadMode,
@@ -21259,7 +21902,7 @@ function StackApp() {
       /* @__PURE__ */ jsx_dev_runtime13.jsxDEV(LoadingSpinner, {
         visible: loading && loadMode === "nuosupport"
       }, undefined, false, undefined, this),
-      (!loading || loadMode !== "nuosupport") && /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+      (!loading || loadMode !== "nuosupport") && mainViewMode === "timeline" && /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
         className: "main-layout",
         children: [
           /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
@@ -21425,6 +22068,407 @@ function StackApp() {
               hasPrev: domainStates.some((ds) => ds.timestamp < (currentTimePoint || Infinity)),
               isOpen: domainPanelOpen,
               onClose: () => setDomainPanelOpen(false)
+            }, undefined, false, undefined, this)
+          }, undefined, false, undefined, this)
+        ]
+      }, undefined, true, undefined, this),
+      mainViewMode === "files" && /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+        className: "file-viewer",
+        style: {
+          display: "flex",
+          height: "calc(100vh - 200px)",
+          background: "var(--bg-primary)"
+        },
+        children: [
+          /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+            style: {
+              width: 300,
+              borderRight: "1px solid var(--border-primary)",
+              overflow: "auto",
+              background: "var(--bg-secondary)"
+            },
+            children: [
+              /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                style: {
+                  padding: "12px 16px",
+                  borderBottom: "1px solid var(--border-primary)"
+                },
+                children: [
+                  /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                    style: {
+                      fontWeight: 600,
+                      fontSize: 14,
+                      color: "var(--text-primary)",
+                      marginBottom: 8
+                    },
+                    children: [
+                      "Files in ",
+                      selectedServer || "server"
+                    ]
+                  }, undefined, true, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                    style: { position: "relative" },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("input", {
+                        type: "text",
+                        placeholder: "Search text in files...",
+                        value: fileListSearch,
+                        onChange: (e) => {
+                          setFileListSearch(e.target.value);
+                        },
+                        style: {
+                          width: "100%",
+                          padding: "6px 28px 6px 8px",
+                          background: "var(--bg-primary)",
+                          border: "1px solid var(--border-primary)",
+                          borderRadius: 4,
+                          color: "var(--text-primary)",
+                          fontSize: 12,
+                          fontFamily: "monospace"
+                        }
+                      }, undefined, false, undefined, this),
+                      fileListSearch && /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("button", {
+                        onClick: () => {
+                          setFileListSearch("");
+                          setFileSearchResults([]);
+                        },
+                        style: {
+                          position: "absolute",
+                          right: 4,
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--text-muted)",
+                          cursor: "pointer",
+                          padding: 4,
+                          fontSize: 14
+                        },
+                        title: "Clear search",
+                        children: "✕"
+                      }, undefined, false, undefined, this)
+                    ]
+                  }, undefined, true, undefined, this),
+                  /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                    style: { display: "flex", alignItems: "center", marginTop: 6, gap: 4 },
+                    children: /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("label", {
+                      style: { display: "flex", alignItems: "center", fontSize: 11, color: "var(--text-muted)", cursor: "pointer" },
+                      children: [
+                        /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("input", {
+                          type: "checkbox",
+                          checked: fileSearchRegex,
+                          onChange: (e) => setFileSearchRegex(e.target.checked),
+                          style: { marginRight: 4 }
+                        }, undefined, false, undefined, this),
+                        ".*"
+                      ]
+                    }, undefined, true, undefined, this)
+                  }, undefined, false, undefined, this),
+                  fileListSearch && /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                    style: {
+                      fontSize: 11,
+                      color: "var(--text-muted)",
+                      marginTop: 4
+                    },
+                    children: isSearchingFiles ? "Searching..." : fileListSearch.length < 3 ? "Type at least 3 characters" : `${fileSearchResults.length} files with matches`
+                  }, undefined, false, undefined, this)
+                ]
+              }, undefined, true, undefined, this),
+              /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                children: availableFiles.length === 0 ? /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                  style: {
+                    padding: 16,
+                    color: "var(--text-muted)",
+                    fontSize: 13,
+                    fontStyle: "italic"
+                  },
+                  children: "No files available"
+                }, undefined, false, undefined, this) : filteredFiles.length === 0 && fileListSearch ? /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                  style: {
+                    padding: 16,
+                    color: "var(--text-muted)",
+                    fontSize: 13,
+                    fontStyle: "italic"
+                  },
+                  children: isSearchingFiles ? "Searching..." : "No files contain this text"
+                }, undefined, false, undefined, this) : filteredFiles.map((file, idx) => {
+                  const matchInfo = fileSearchResults.find((r) => r.file === file);
+                  return /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                    onClick: () => loadFileContent(file),
+                    style: {
+                      padding: "10px 16px",
+                      cursor: "pointer",
+                      background: selectedFile === file ? "var(--button-bg)" : "transparent",
+                      color: selectedFile === file ? "var(--text-primary)" : "var(--text-secondary)",
+                      borderBottom: "1px solid var(--border-primary)",
+                      fontSize: 13,
+                      fontFamily: "monospace",
+                      transition: "background 0.15s ease",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center"
+                    },
+                    onMouseEnter: (e) => {
+                      if (selectedFile !== file) {
+                        e.currentTarget.style.background = "rgba(159, 180, 201, 0.05)";
+                      }
+                    },
+                    onMouseLeave: (e) => {
+                      if (selectedFile !== file) {
+                        e.currentTarget.style.background = "transparent";
+                      }
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("span", {
+                        children: file
+                      }, undefined, false, undefined, this),
+                      matchInfo && /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("span", {
+                        style: {
+                          fontSize: 10,
+                          background: "rgba(43, 157, 244, 0.2)",
+                          color: "#43bdff",
+                          padding: "2px 6px",
+                          borderRadius: 3,
+                          fontWeight: 600
+                        },
+                        children: matchInfo.matches
+                      }, undefined, false, undefined, this)
+                    ]
+                  }, idx, true, undefined, this);
+                })
+              }, undefined, false, undefined, this)
+            ]
+          }, undefined, true, undefined, this),
+          /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+            style: {
+              flex: 1,
+              overflow: "auto",
+              padding: 20,
+              background: "var(--bg-primary)"
+            },
+            children: selectedFile ? /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+              children: [
+                /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                  style: {
+                    position: "sticky",
+                    top: 0,
+                    background: "var(--bg-primary)",
+                    zIndex: 10,
+                    marginBottom: 16,
+                    paddingBottom: 12,
+                    borderBottom: "1px solid var(--border-primary)"
+                  },
+                  children: /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                    style: {
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 8
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                            style: {
+                              fontSize: 16,
+                              fontWeight: 600,
+                              color: "var(--text-primary)",
+                              fontFamily: "monospace"
+                            },
+                            children: selectedFile
+                          }, undefined, false, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                            style: {
+                              fontSize: 12,
+                              color: "var(--text-muted)",
+                              marginTop: 4
+                            },
+                            children: [
+                              fileContent.split("\\n").length.toLocaleString(),
+                              " lines"
+                            ]
+                          }, undefined, true, undefined, this)
+                        ]
+                      }, undefined, true, undefined, this),
+                      /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                        style: { display: "flex", alignItems: "center", gap: 8 },
+                        children: [
+                          /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                            style: { position: "relative" },
+                            children: [
+                              /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("input", {
+                                type: "text",
+                                placeholder: "Search in file...",
+                                value: fileContentSearch,
+                                onChange: (e) => {
+                                  setFileContentSearch(e.target.value);
+                                },
+                                style: {
+                                  padding: "6px 28px 6px 8px",
+                                  background: "var(--bg-secondary)",
+                                  border: "1px solid var(--border-primary)",
+                                  borderRadius: 4,
+                                  color: "var(--text-primary)",
+                                  fontSize: 12,
+                                  fontFamily: "monospace",
+                                  width: 200
+                                }
+                              }, undefined, false, undefined, this),
+                              fileContentSearch && /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("button", {
+                                onClick: () => {
+                                  setFileContentSearch("");
+                                  setCurrentMatchIndex(0);
+                                },
+                                style: {
+                                  position: "absolute",
+                                  right: 4,
+                                  top: "50%",
+                                  transform: "translateY(-50%)",
+                                  background: "transparent",
+                                  border: "none",
+                                  color: "var(--text-muted)",
+                                  cursor: "pointer",
+                                  padding: 4,
+                                  fontSize: 14
+                                },
+                                title: "Clear search",
+                                children: "✕"
+                              }, undefined, false, undefined, this)
+                            ]
+                          }, undefined, true, undefined, this),
+                          /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("label", {
+                            style: { display: "flex", alignItems: "center", fontSize: 11, color: "var(--text-muted)", cursor: "pointer", whiteSpace: "nowrap" },
+                            children: [
+                              /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("input", {
+                                type: "checkbox",
+                                checked: fileContentSearchRegex,
+                                onChange: (e) => {
+                                  setFileContentSearchRegex(e.target.checked);
+                                },
+                                style: { marginRight: 4 }
+                              }, undefined, false, undefined, this),
+                              ".*"
+                            ]
+                          }, undefined, true, undefined, this),
+                          contentMatches.length > 0 && /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                            style: { display: "flex", alignItems: "center", gap: 4 },
+                            children: [
+                              /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("button", {
+                                onClick: goToPrevMatch,
+                                style: {
+                                  background: "var(--button-bg)",
+                                  border: "none",
+                                  color: "var(--text-primary)",
+                                  cursor: "pointer",
+                                  padding: "4px 8px",
+                                  borderRadius: 3,
+                                  fontSize: 12
+                                },
+                                title: "Previous match",
+                                children: "↑"
+                              }, undefined, false, undefined, this),
+                              /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("button", {
+                                onClick: goToNextMatch,
+                                style: {
+                                  background: "var(--button-bg)",
+                                  border: "none",
+                                  color: "var(--text-primary)",
+                                  cursor: "pointer",
+                                  padding: "4px 8px",
+                                  borderRadius: 3,
+                                  fontSize: 12
+                                },
+                                title: "Next match",
+                                children: "↓"
+                              }, undefined, false, undefined, this),
+                              /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+                                style: {
+                                  fontSize: 11,
+                                  color: "var(--text-muted)",
+                                  marginLeft: 4
+                                },
+                                children: [
+                                  currentMatchIndex + 1,
+                                  " / ",
+                                  contentMatches.length
+                                ]
+                              }, undefined, true, undefined, this)
+                            ]
+                          }, undefined, true, undefined, this)
+                        ]
+                      }, undefined, true, undefined, this)
+                    ]
+                  }, undefined, true, undefined, this)
+                }, undefined, false, undefined, this),
+                fileContentSearch && contentMatches.length > 0 ? /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("pre", {
+                  style: {
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: "var(--text-primary)",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                    margin: 0
+                  },
+                  children: (() => {
+                    const parts = [];
+                    let lastIndex = 0;
+                    contentMatches.forEach((match, i) => {
+                      if (match.index > lastIndex) {
+                        parts.push(/* @__PURE__ */ jsx_dev_runtime13.jsxDEV("span", {
+                          children: fileContent.substring(lastIndex, match.index)
+                        }, `text-${i}`, false, undefined, this));
+                      }
+                      const isCurrent = i === currentMatchIndex;
+                      parts.push(/* @__PURE__ */ jsx_dev_runtime13.jsxDEV("span", {
+                        id: isCurrent ? "current-match" : undefined,
+                        style: {
+                          background: isCurrent ? "#ffaa00" : "#ffff00",
+                          color: "#000",
+                          fontWeight: isCurrent ? 600 : 400,
+                          padding: "2px 0"
+                        },
+                        children: fileContent.substring(match.index, match.index + match.length)
+                      }, `match-${i}`, false, undefined, this));
+                      lastIndex = match.index + match.length;
+                    });
+                    if (lastIndex < fileContent.length) {
+                      parts.push(/* @__PURE__ */ jsx_dev_runtime13.jsxDEV("span", {
+                        children: fileContent.substring(lastIndex)
+                      }, "text-end", false, undefined, this));
+                    }
+                    setTimeout(() => {
+                      const elem = document.getElementById("current-match");
+                      if (elem) {
+                        elem.scrollIntoView({ block: "center", behavior: "smooth" });
+                      }
+                    }, 100);
+                    return parts;
+                  })()
+                }, undefined, false, undefined, this) : /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("pre", {
+                  style: {
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: "var(--text-primary)",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                    margin: 0
+                  },
+                  children: fileContent
+                }, undefined, false, undefined, this)
+              ]
+            }, undefined, true, undefined, this) : /* @__PURE__ */ jsx_dev_runtime13.jsxDEV("div", {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: "100%",
+                color: "var(--text-muted)",
+                fontSize: 14,
+                fontStyle: "italic"
+              },
+              children: "Select a file to view its contents"
             }, undefined, false, undefined, this)
           }, undefined, false, undefined, this)
         ]

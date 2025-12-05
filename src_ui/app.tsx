@@ -103,6 +103,19 @@ function StackApp(): JSX.Element {
   const [domainPanelOpen, setDomainPanelOpen] = useState(true);
   const [domainPanelWidth, setDomainPanelWidth] = useState(600);
   const [isResizing, setIsResizing] = useState(false);
+  const [mainViewMode, setMainViewMode] = useState<'timeline' | 'files'>('timeline');
+  const [availableFiles, setAvailableFiles] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string>('');
+  const [fileListSearch, setFileListSearch] = useState<string>('');
+  const [fileContentSearch, setFileContentSearch] = useState<string>('');
+  const [currentMatchIndex, setCurrentMatchIndex] = useState<number>(0);
+  const [fileSearchResults, setFileSearchResults] = useState<{file: string, matches: number}[]>([]);
+  const [isSearchingFiles, setIsSearchingFiles] = useState<boolean>(false);
+  const [fileSearchRegex, setFileSearchRegex] = useState<boolean>(false);
+  const [fileContentSearchRegex, setFileContentSearchRegex] = useState<boolean>(false);
+  const [contentMatches, setContentMatches] = useState<{index: number, length: number}[]>([]);
+  const [isCalculatingMatches, setIsCalculatingMatches] = useState<boolean>(false);
 
   // Use custom hooks
   const { theme, setTheme } = useTheme('dark');
@@ -111,6 +124,69 @@ function StackApp(): JSX.Element {
   
   useDropdownOutsideClick(serverDropdownOpen, sidDropdownOpen, setServerDropdownOpen, setSidDropdownOpen);
   useUrlNavigation(loadMode);
+
+  // Debounce timer for file search
+  useEffect(() => {
+    if (!fileListSearch) {
+      setFileSearchResults([]);
+      return;
+    }
+
+    if (fileListSearch.length < 3) {
+      setFileSearchResults([]);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      searchAcrossFiles(fileListSearch);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [fileListSearch, loadMode, selectedTicket, selectedPackage, selectedServer, availableFiles, fileSearchRegex]);
+
+  // Debounced content match calculation
+  useEffect(() => {
+    if (!fileContentSearch || !fileContent) {
+      setContentMatches([]);
+      setIsCalculatingMatches(false);
+      return;
+    }
+
+    setIsCalculatingMatches(true);
+    const timer = setTimeout(() => {
+      const matches: {index: number, length: number}[] = [];
+      
+      if (fileContentSearchRegex) {
+        try {
+          const regex = new RegExp(fileContentSearch, 'gi');
+          let match;
+          while ((match = regex.exec(fileContent)) !== null) {
+            matches.push({index: match.index, length: match[0].length});
+            // Prevent infinite loop on zero-length matches
+            if (match[0].length === 0) {
+              regex.lastIndex++;
+            }
+          }
+        } catch (e) {
+          // Invalid regex, ignore
+        }
+      } else {
+        const searchLower = fileContentSearch.toLowerCase();
+        const contentLower = fileContent.toLowerCase();
+        let index = 0;
+        while ((index = contentLower.indexOf(searchLower, index)) !== -1) {
+          matches.push({index, length: fileContentSearch.length});
+          index += searchLower.length;
+        }
+      }
+      
+      setContentMatches(matches);
+      setCurrentMatchIndex(0);
+      setIsCalculatingMatches(false);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [fileContentSearch, fileContent, fileContentSearchRegex]);
 
   // Handle panel resize
   useEffect(() => {
@@ -174,6 +250,136 @@ function StackApp(): JSX.Element {
       setLoading(false);
     }
   }
+
+  // Load list of files from the server directory
+  async function loadFileList() {
+    if (loadMode === 'nuosupport' && selectedTicket && selectedPackage && selectedServer) {
+      console.log('[loadFileList] Loading files for:', { selectedTicket, selectedPackage, selectedServer });
+      try {
+        const res = await fetch(
+          `/list-files?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(
+            selectedPackage
+          )}&server=${encodeURIComponent(selectedServer)}`
+        );
+        const json = await res.json();
+        console.log('[loadFileList] Response:', json);
+        if (json.error) {
+          console.error('[loadFileList] Error from server:', json.error);
+          setAvailableFiles([]);
+        } else if (json.files) {
+          console.log('[loadFileList] Setting files:', json.files.length);
+          setAvailableFiles(json.files);
+        }
+      } catch (e) {
+        console.error('[loadFileList] Error loading file list:', e);
+        setAvailableFiles([]);
+      }
+    } else {
+      console.log('[loadFileList] Conditions not met:', { loadMode, selectedTicket, selectedPackage, selectedServer });
+    }
+  }
+
+  // Filter files based on search results
+  const filteredFiles = fileListSearch && fileSearchResults.length > 0
+    ? fileSearchResults.map(r => r.file)
+    : fileListSearch
+    ? []
+    : availableFiles;
+
+  // Content matches are now calculated in useEffect above
+
+  // Search for text across all files
+  async function searchAcrossFiles(searchText: string) {
+    if (!searchText || loadMode !== 'nuosupport' || !selectedTicket || !selectedPackage || !selectedServer) {
+      setFileSearchResults([]);
+      return;
+    }
+
+    setIsSearchingFiles(true);
+    const results: {file: string, matches: number}[] = [];
+
+    try {
+      for (const file of availableFiles) {
+        const res = await fetch(
+          `/file-content?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(
+            selectedPackage
+          )}&server=${encodeURIComponent(selectedServer)}&file=${encodeURIComponent(file)}`
+        );
+        const content = await res.text();
+        let matchCount = 0;
+
+        if (fileSearchRegex) {
+          try {
+            const regex = new RegExp(searchText, 'gi');
+            const matches = content.match(regex);
+            matchCount = matches ? matches.length : 0;
+          } catch (e) {
+            // Invalid regex, skip this file
+          }
+        } else {
+          const searchLower = searchText.toLowerCase();
+          const contentLower = content.toLowerCase();
+          let index = 0;
+          while ((index = contentLower.indexOf(searchLower, index)) !== -1) {
+            matchCount++;
+            index += searchLower.length;
+          }
+        }
+
+        if (matchCount > 0) {
+          results.push({ file, matches: matchCount });
+        }
+      }
+      setFileSearchResults(results);
+    } catch (e) {
+      console.error('[searchAcrossFiles] Error:', e);
+    } finally {
+      setIsSearchingFiles(false);
+    }
+  }
+
+  // Load content of a specific file
+  async function loadFileContent(filename: string) {
+    if (loadMode === 'nuosupport' && selectedTicket && selectedPackage && selectedServer) {
+      try {
+        const res = await fetch(
+          `/file-content?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(
+            selectedPackage
+          )}&server=${encodeURIComponent(selectedServer)}&file=${encodeURIComponent(filename)}`
+        );
+        const text = await res.text();
+        setFileContent(text);
+        setSelectedFile(filename);
+        setFileContentSearch('');
+        setCurrentMatchIndex(0);
+      } catch (e) {
+        console.error('Error loading file content:', e);
+      }
+    }
+  }
+
+  // Navigate to next search match
+  function goToNextMatch() {
+    if (contentMatches.length > 0) {
+      setCurrentMatchIndex((prev) => (prev + 1) % contentMatches.length);
+    }
+  }
+
+  // Navigate to previous search match
+  function goToPrevMatch() {
+    if (contentMatches.length > 0) {
+      setCurrentMatchIndex((prev) => (prev - 1 + contentMatches.length) % contentMatches.length);
+    }
+  }
+
+  // Load files when server changes or when switching to files view
+  useEffect(() => {
+    console.log('[useEffect] Checking if should load files:', { loadMode, selectedServer, mainViewMode, selectedTicket, selectedPackage });
+    if (loadMode === 'nuosupport' && selectedTicket && selectedPackage && selectedServer && mainViewMode === 'files') {
+      console.log('[useEffect] Triggering loadFileList');
+      loadFileList();
+    }
+  }, [selectedServer, loadMode, mainViewMode, selectedTicket, selectedPackage]);
 
   async function loadFromNuoSupportHandler() {
     if (!selectedTicket || !selectedPackage || !selectedServer) return;
@@ -753,6 +959,11 @@ function StackApp(): JSX.Element {
         setTheme={setTheme}
         domainStatePanelOpen={domainPanelOpen}
         setDomainStatePanelOpen={setDomainPanelOpen}
+        mainViewMode={mainViewMode}
+        setMainViewMode={setMainViewMode}
+        loadMode={loadMode}
+        selectedServer={selectedServer}
+        onFilesViewClick={loadFileList}
       />
 
       <ServerTimeline
@@ -770,7 +981,7 @@ function StackApp(): JSX.Element {
       <LoadingSpinner visible={loading && loadMode === 'nuosupport'} />
 
       {/* Main content - hidden when loading */}
-      {(!loading || loadMode !== 'nuosupport') && (
+      {(!loading || loadMode !== 'nuosupport') && mainViewMode === 'timeline' && (
       <div className="main-layout">
         <div 
           className="timeline-container" 
@@ -948,6 +1159,403 @@ function StackApp(): JSX.Element {
         </div>
       </div>
       )}
+
+      {/* File Viewer - shown when mainViewMode is 'files' */}
+      {mainViewMode === 'files' && (
+        <div className="file-viewer" style={{
+          display: 'flex',
+          height: 'calc(100vh - 200px)',
+          background: 'var(--bg-primary)',
+        }}>
+          {/* File List Sidebar */}
+          <div style={{
+            width: 300,
+            borderRight: '1px solid var(--border-primary)',
+            overflow: 'auto',
+            background: 'var(--bg-secondary)',
+          }}>
+            <div style={{
+              padding: '12px 16px',
+              borderBottom: '1px solid var(--border-primary)',
+            }}>
+              <div style={{
+                fontWeight: 600,
+                fontSize: 14,
+                color: 'var(--text-primary)',
+                marginBottom: 8,
+              }}>
+                Files in {selectedServer || 'server'}
+              </div>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  placeholder="Search text in files..."
+                  value={fileListSearch}
+                  onChange={(e) => {
+                    setFileListSearch(e.target.value);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '6px 28px 6px 8px',
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: 4,
+                    color: 'var(--text-primary)',
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                  }}
+                />
+                {fileListSearch && (
+                  <button
+                    onClick={() => {
+                      setFileListSearch('');
+                      setFileSearchResults([]);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: 4,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                      padding: 4,
+                      fontSize: 14,
+                    }}
+                    title="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 6, gap: 4 }}>
+                <label style={{ display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={fileSearchRegex}
+                    onChange={(e) => setFileSearchRegex(e.target.checked)}
+                    style={{ marginRight: 4 }}
+                  />
+                  .*
+                </label>
+              </div>
+              {fileListSearch && (
+                <div style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  marginTop: 4,
+                }}>
+                  {isSearchingFiles ? (
+                    'Searching...'
+                  ) : fileListSearch.length < 3 ? (
+                    'Type at least 3 characters'
+                  ) : (
+                    `${fileSearchResults.length} files with matches`
+                  )}
+                </div>
+              )}
+            </div>
+            <div>
+              {availableFiles.length === 0 ? (
+                <div style={{
+                  padding: 16,
+                  color: 'var(--text-muted)',
+                  fontSize: 13,
+                  fontStyle: 'italic',
+                }}>
+                  No files available
+                </div>
+              ) : filteredFiles.length === 0 && fileListSearch ? (
+                <div style={{
+                  padding: 16,
+                  color: 'var(--text-muted)',
+                  fontSize: 13,
+                  fontStyle: 'italic',
+                }}>
+                  {isSearchingFiles ? 'Searching...' : 'No files contain this text'}
+                </div>
+              ) : (
+                filteredFiles.map((file, idx) => {
+                  const matchInfo = fileSearchResults.find(r => r.file === file);
+                  return (
+                  <div
+                    key={idx}
+                    onClick={() => loadFileContent(file)}
+                    style={{
+                      padding: '10px 16px',
+                      cursor: 'pointer',
+                      background: selectedFile === file ? 'var(--button-bg)' : 'transparent',
+                      color: selectedFile === file ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      borderBottom: '1px solid var(--border-primary)',
+                      fontSize: 13,
+                      fontFamily: 'monospace',
+                      transition: 'background 0.15s ease',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (selectedFile !== file) {
+                        e.currentTarget.style.background = 'rgba(159, 180, 201, 0.05)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (selectedFile !== file) {
+                        e.currentTarget.style.background = 'transparent';
+                      }
+                    }}
+                  >
+                    <span>{file}</span>
+                    {matchInfo && (
+                      <span style={{
+                        fontSize: 10,
+                        background: 'rgba(43, 157, 244, 0.2)',
+                        color: '#43bdff',
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                        fontWeight: 600,
+                      }}>
+                        {matchInfo.matches}
+                      </span>
+                    )}
+                  </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* File Content Viewer */}
+          <div style={{
+            flex: 1,
+            overflow: 'auto',
+            padding: 20,
+            background: 'var(--bg-primary)',
+          }}>
+            {selectedFile ? (
+              <div>
+                <div style={{
+                  position: 'sticky',
+                  top: 0,
+                  background: 'var(--bg-primary)',
+                  zIndex: 10,
+                  marginBottom: 16,
+                  paddingBottom: 12,
+                  borderBottom: '1px solid var(--border-primary)',
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 8,
+                  }}>
+                    <div>
+                      <div style={{
+                        fontSize: 16,
+                        fontWeight: 600,
+                        color: 'var(--text-primary)',
+                        fontFamily: 'monospace',
+                      }}>
+                        {selectedFile}
+                      </div>
+                      <div style={{
+                        fontSize: 12,
+                        color: 'var(--text-muted)',
+                        marginTop: 4,
+                      }}>
+                        {fileContent.split('\\n').length.toLocaleString()} lines
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ position: 'relative' }}>
+                        <input
+                          type="text"
+                          placeholder="Search in file..."
+                          value={fileContentSearch}
+                          onChange={(e) => {
+                            setFileContentSearch(e.target.value);
+                          }}
+                          style={{
+                            padding: '6px 28px 6px 8px',
+                            background: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-primary)',
+                            borderRadius: 4,
+                            color: 'var(--text-primary)',
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                            width: 200,
+                          }}
+                        />
+                        {fileContentSearch && (
+                          <button
+                            onClick={() => {
+                              setFileContentSearch('');
+                              setCurrentMatchIndex(0);
+                            }}
+                            style={{
+                              position: 'absolute',
+                              right: 4,
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              padding: 4,
+                              fontSize: 14,
+                            }}
+                            title="Clear search"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        <input
+                          type="checkbox"
+                          checked={fileContentSearchRegex}
+                          onChange={(e) => {
+                            setFileContentSearchRegex(e.target.checked);
+                          }}
+                          style={{ marginRight: 4 }}
+                        />
+                        .*
+                      </label>
+                      {contentMatches.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <button
+                            onClick={goToPrevMatch}
+                            style={{
+                              background: 'var(--button-bg)',
+                              border: 'none',
+                              color: 'var(--text-primary)',
+                              cursor: 'pointer',
+                              padding: '4px 8px',
+                              borderRadius: 3,
+                              fontSize: 12,
+                            }}
+                            title="Previous match"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            onClick={goToNextMatch}
+                            style={{
+                              background: 'var(--button-bg)',
+                              border: 'none',
+                              color: 'var(--text-primary)',
+                              cursor: 'pointer',
+                              padding: '4px 8px',
+                              borderRadius: 3,
+                              fontSize: 12,
+                            }}
+                            title="Next match"
+                          >
+                            ↓
+                          </button>
+                          <div style={{
+                            fontSize: 11,
+                            color: 'var(--text-muted)',
+                            marginLeft: 4,
+                          }}>
+                            {currentMatchIndex + 1} / {contentMatches.length}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {fileContentSearch && contentMatches.length > 0 ? (
+                  <pre style={{
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: 'var(--text-primary)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    margin: 0,
+                  }}>
+                    {(() => {
+                      const parts: JSX.Element[] = [];
+                      let lastIndex = 0;
+
+                      contentMatches.forEach((match, i) => {
+                        // Add text before match
+                        if (match.index > lastIndex) {
+                          parts.push(
+                            <span key={`text-${i}`}>{fileContent.substring(lastIndex, match.index)}</span>
+                          );
+                        }
+                        
+                        // Add highlighted match
+                        const isCurrent = i === currentMatchIndex;
+                        parts.push(
+                          <span
+                            key={`match-${i}`}
+                            id={isCurrent ? 'current-match' : undefined}
+                            style={{
+                              background: isCurrent ? '#ffaa00' : '#ffff00',
+                              color: '#000',
+                              fontWeight: isCurrent ? 600 : 400,
+                              padding: '2px 0',
+                            }}
+                          >
+                            {fileContent.substring(match.index, match.index + match.length)}
+                          </span>
+                        );
+                        
+                        lastIndex = match.index + match.length;
+                      });
+
+                      // Add remaining text
+                      if (lastIndex < fileContent.length) {
+                        parts.push(
+                          <span key="text-end">{fileContent.substring(lastIndex)}</span>
+                        );
+                      }
+
+                      // Scroll to current match
+                      setTimeout(() => {
+                        const elem = document.getElementById('current-match');
+                        if (elem) {
+                          elem.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                        }
+                      }, 100);
+
+                      return parts;
+                    })()}
+                  </pre>
+                ) : (
+                  <pre style={{
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: 'var(--text-primary)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    margin: 0,
+                  }}>
+                    {fileContent}
+                  </pre>
+                )}
+              </div>
+            ) : (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+                color: 'var(--text-muted)',
+                fontSize: 14,
+                fontStyle: 'italic',
+              }}>
+                Select a file to view its contents
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -957,3 +1565,4 @@ assert(document);
 //@ts-ignore
 const root = createRoot(document.getElementById('root')!);
 root.render(<StackApp />);
+

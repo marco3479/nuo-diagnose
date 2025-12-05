@@ -326,3 +326,204 @@ export async function handleDomainStates(request: any): Promise<Response> {
 		});
 	}
 }
+
+/**
+ * List all files in a server directory
+ */
+export async function handleListFiles(request: any): Promise<Response> {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get('ticket');
+	const pkg = url.searchParams.get('package');
+	const server = url.searchParams.get('server');
+	
+	console.log(`[list-files] Request for ticket=${ticket}, package=${pkg}, server=${server}`);
+	
+	if (!ticket || !pkg || !server) {
+		return new Response(JSON.stringify({ error: 'Missing ticket, package, or server parameter' }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+
+	const serverPath = `${DASSAULT_PATH}/${ticket}/${pkg}/admin/${server}`;
+	console.log(`[list-files] Reading from: ${serverPath}`);
+	
+	try {
+		const fs = await import('fs/promises');
+		const entries = await fs.readdir(serverPath);
+		console.log(`[list-files] Found ${entries.length} entries`);
+		
+		// Filter for files only (not directories)
+		const files: string[] = [];
+		for (const entry of entries) {
+			try {
+				const path = await import('path');
+				const fullPath = path.join(serverPath, entry);
+				const stat = await fs.stat(fullPath);
+				if (stat.isFile()) {
+					files.push(entry);
+				}
+			} catch (e) {
+				// Skip entries that can't be stat'd
+			}
+		}
+		
+		files.sort();
+		console.log(`[list-files] Returning ${files.length} files:`, files);
+		return new Response(JSON.stringify({ files }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+		console.error(`[list-files] Error:`, err);
+		return new Response(JSON.stringify({ error: msg }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/**
+ * Get content of a specific file
+ */
+export async function handleFileContent(request: any): Promise<Response> {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get('ticket');
+	const pkg = url.searchParams.get('package');
+	const server = url.searchParams.get('server');
+	const file = url.searchParams.get('file');
+	
+	console.log(`[file-content] Request for ticket=${ticket}, package=${pkg}, server=${server}, file=${file}`);
+	
+	if (!ticket || !pkg || !server || !file) {
+		return new Response(JSON.stringify({ error: 'Missing required parameters' }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+
+	const path = await import('path');
+	const serverPath = `${DASSAULT_PATH}/${ticket}/${pkg}/admin/${server}`;
+	const filePath = path.join(serverPath, file);
+	
+	console.log(`[file-content] Reading file: ${filePath}`);
+	
+	// Security check: ensure the resolved path is within the server directory
+	const fs = await import('fs/promises');
+	try {
+		const realServerPath = await fs.realpath(serverPath);
+		const realFilePath = await fs.realpath(filePath).catch(() => null);
+		
+		if (!realFilePath || !realFilePath.startsWith(realServerPath)) {
+			console.error(`[file-content] Security violation: ${realFilePath} not under ${realServerPath}`);
+			return new Response('Forbidden', { status: 403 });
+		}
+		
+		const content = await fs.readFile(filePath, 'utf-8');
+		console.log(`[file-content] Successfully read ${content.length} bytes`);
+		return new Response(content, {
+			headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+		});
+	} catch (err) {
+		const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+		console.error(`[file-content] Error:`, err);
+		return new Response(JSON.stringify({ error: msg }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/**
+ * List all files in a server directory
+ */
+export async function handleListFiles(request: any): Promise<Response> {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get('ticket');
+	const pkg = url.searchParams.get('package');
+	const server = url.searchParams.get('server');
+	
+	if (!ticket || !pkg || !server) {
+		return new Response(JSON.stringify({ error: 'Missing ticket, package, or server parameter' }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+
+	const serverPath = `${DASSAULT_PATH}/${ticket}/${pkg}/admin/${server}`;
+	
+	try {
+		const fs = await import('fs/promises');
+		const entries = await fs.readdir(serverPath);
+		
+		// Filter for files only (not directories)
+		const files: string[] = [];
+		for (const entry of entries) {
+			try {
+				const path = await import('path');
+				const fullPath = path.join(serverPath, entry);
+				const stat = await fs.stat(fullPath);
+				if (stat.isFile()) {
+					files.push(entry);
+				}
+			} catch (e) {
+				// Skip entries that can't be stat'd
+			}
+		}
+		
+		files.sort();
+		return new Response(JSON.stringify({ files }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+		return new Response(JSON.stringify({ error: msg }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/**
+ * Get content of a specific file
+ */
+export async function handleFileContent(request: any): Promise<Response> {
+	const url = new URL(request.url);
+	const ticket = url.searchParams.get('ticket');
+	const pkg = url.searchParams.get('package');
+	const server = url.searchParams.get('server');
+	const file = url.searchParams.get('file');
+	
+	if (!ticket || !pkg || !server || !file) {
+		return new Response(JSON.stringify({ error: 'Missing required parameters' }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+
+	const path = await import('path');
+	const serverPath = `${DASSAULT_PATH}/${ticket}/${pkg}/admin/${server}`;
+	const filePath = path.join(serverPath, file);
+	
+	// Security check: ensure the resolved path is within the server directory
+	const fs = await import('fs/promises');
+	const realServerPath = await fs.realpath(serverPath);
+	const realFilePath = await fs.realpath(filePath).catch(() => null);
+	
+	if (!realFilePath || !realFilePath.startsWith(realServerPath)) {
+		return new Response('Forbidden', { status: 403 });
+	}
+	
+	try {
+		const content = await fs.readFile(filePath, 'utf-8');
+		return new Response(content, {
+			headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+		});
+	} catch (err) {
+		const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+		return new Response(JSON.stringify({ error: msg }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}

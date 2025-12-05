@@ -13,6 +13,8 @@ import {
 	handleListServers,
 	handleServerTimeRanges,
 	handleDomainStates,
+	handleListFiles,
+	handleFileContent,
 } from './src/file-handlers';
 
 
@@ -32,6 +34,8 @@ Bun.serve({
 		if (url.pathname === "/server-time-ranges") return handleServerTimeRanges(req);
 		if (url.pathname === "/domain-states") return handleDomainStates(req);
 		if (url.pathname === "/load-diagnose") return handleLoadDiagnose(req);
+		if (url.pathname === "/list-files") return handleListFiles(req);
+		if (url.pathname === "/file-content") return handleFileContent(req);
 
 		// default to serving static files from ./public
 		// map /, /nuosupport, and /nuosupport/* -> /public/index.html (for SPA routing)

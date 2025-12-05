@@ -216,45 +216,164 @@ export function parseDomainLines(text: string, fileSource?: string): LogEvent[] 
 	const events: LogEvent[] = [];
 
 	const re = /^(\S+)\s+\S+\s+\[([^\]]+)\]\s+DomainProcessStateMachine\s+(.*)$/;
+	// Pattern to detect the start of a new log entry (timestamp at beginning)
+	const timestampRe = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+/;
 
-	for (const raw of lines) {
-		const m = raw.match(re);
-		if (!m) continue;
+	let currentEntry: { iso: string; bracket: string; message: string; raw: string } | null = null;
 
-		const iso = m[1] ?? '';
-		const bracket = m[2] ?? '';
-		const message = m[3] ?? '';
-		const ts = Date.parse(iso);
-		if (Number.isNaN(ts)) continue;
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		
+		// Check if this line starts a new log entry
+		const m = line.match(re);
+		
+		if (m) {
+			// Process the previous entry if it exists
+			if (currentEntry) {
+				const ts = Date.parse(currentEntry.iso);
+				if (!Number.isNaN(ts)) {
+					const process = currentEntry.bracket.split(':')[0] || currentEntry.bracket || 'unknown';
+					const sid = extractSid(currentEntry.message, currentEntry.raw);
+					const { instType, instAddr } = extractTypeAndAddress(currentEntry.message, currentEntry.raw);
 
-		const process = bracket.split(':')[0] || bracket || 'unknown';
-		const sid = extractSid(message, raw);
-		const { instType, instAddr } = extractTypeAndAddress(message, raw);
+					const evt: LogEvent = { 
+						ts, 
+						iso: currentEntry.iso, 
+						process, 
+						message: currentEntry.message, 
+						raw: currentEntry.raw, 
+						fileSource, 
+						sid 
+					};
 
-		const evt: LogEvent = { ts, iso, process, message, raw, fileSource, sid };
+					// Parse database update diffs for highlighting
+					evt.dbDiff = parseDbDiff(currentEntry.message);
 
-		// Parse database update diffs for highlighting
-		evt.dbDiff = parseDbDiff(message);
+					events.push(evt);
 
-		events.push(evt);
+					// Capture database state transitions
+					captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso);
 
-		// Capture database state transitions
-		captureDatabaseState(message, raw, ts, iso);
+					// Track sid occurrences and metadata
+					if (sid !== null) {
+						// Capture type/address hints for this sid
+						if (instType) sidTypeMap[sid] = sidTypeMap[sid] || instType;
 
-		// Track sid occurrences and metadata
-		if (sid !== null) {
-			// Capture type/address hints for this sid
-			if (instType) sidTypeMap[sid] = sidTypeMap[sid] || instType;
+						// Only store address if it's good (not <LOCAL) OR if we don't have one yet
+						if (instAddr && !instAddr.startsWith('<LOCAL')) {
+							sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
+						} else if (instAddr && !sidAddressMap[sid]) {
+							// Store <LOCAL as fallback only if we have nothing else
+							sidAddressMap[sid] = instAddr;
+						}
 
-			// Only store address if it's good (not <LOCAL) OR if we don't have one yet
-			if (instAddr && !instAddr.startsWith('<LOCAL')) {
-				sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
-			} else if (instAddr && !sidAddressMap[sid]) {
-				// Store <LOCAL as fallback only if we have nothing else
-				sidAddressMap[sid] = instAddr;
+						recordStartIdOccurrence(currentEntry.message, process, sid, ts, currentEntry.iso, currentEntry.raw, instType, instAddr);
+					}
+				}
 			}
 
-			recordStartIdOccurrence(message, process, sid, ts, iso, raw, instType, instAddr);
+			// Start a new entry
+			currentEntry = {
+				iso: m[1] ?? '',
+				bracket: m[2] ?? '',
+				message: m[3] ?? '',
+				raw: line
+			};
+		} else if (currentEntry && !timestampRe.test(line)) {
+			// This is a continuation line for the current entry
+			// Append it to both the raw and message fields
+			currentEntry.raw += '\n' + line;
+			currentEntry.message += '\n' + line;
+		} else if (currentEntry && timestampRe.test(line)) {
+			// This line starts with a timestamp but doesn't match DomainProcessStateMachine
+			// Process the current entry and don't start a new one
+			const ts = Date.parse(currentEntry.iso);
+			if (!Number.isNaN(ts)) {
+				const process = currentEntry.bracket.split(':')[0] || currentEntry.bracket || 'unknown';
+				const sid = extractSid(currentEntry.message, currentEntry.raw);
+				const { instType, instAddr } = extractTypeAndAddress(currentEntry.message, currentEntry.raw);
+
+				const evt: LogEvent = { 
+					ts, 
+					iso: currentEntry.iso, 
+					process, 
+					message: currentEntry.message, 
+					raw: currentEntry.raw, 
+					fileSource, 
+					sid 
+				};
+
+				// Parse database update diffs for highlighting
+				evt.dbDiff = parseDbDiff(currentEntry.message);
+
+				events.push(evt);
+
+				// Capture database state transitions
+				captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso);
+
+				// Track sid occurrences and metadata
+				if (sid !== null) {
+					// Capture type/address hints for this sid
+					if (instType) sidTypeMap[sid] = sidTypeMap[sid] || instType;
+
+					// Only store address if it's good (not <LOCAL) OR if we don't have one yet
+					if (instAddr && !instAddr.startsWith('<LOCAL')) {
+						sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
+					} else if (instAddr && !sidAddressMap[sid]) {
+						// Store <LOCAL as fallback only if we have nothing else
+						sidAddressMap[sid] = instAddr;
+					}
+
+					recordStartIdOccurrence(currentEntry.message, process, sid, ts, currentEntry.iso, currentEntry.raw, instType, instAddr);
+				}
+			}
+			
+			// Reset current entry since this is a different log type
+			currentEntry = null;
+		}
+	}
+
+	// Process the last entry if it exists
+	if (currentEntry) {
+		const ts = Date.parse(currentEntry.iso);
+		if (!Number.isNaN(ts)) {
+			const process = currentEntry.bracket.split(':')[0] || currentEntry.bracket || 'unknown';
+			const sid = extractSid(currentEntry.message, currentEntry.raw);
+			const { instType, instAddr } = extractTypeAndAddress(currentEntry.message, currentEntry.raw);
+
+			const evt: LogEvent = { 
+				ts, 
+				iso: currentEntry.iso, 
+				process, 
+				message: currentEntry.message, 
+				raw: currentEntry.raw, 
+				fileSource, 
+				sid 
+			};
+
+			// Parse database update diffs for highlighting
+			evt.dbDiff = parseDbDiff(currentEntry.message);
+
+			events.push(evt);
+
+			// Capture database state transitions
+			captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso);
+
+			// Track sid occurrences and metadata
+			if (sid !== null) {
+				// Capture type/address hints for this sid
+				if (instType) sidTypeMap[sid] = sidTypeMap[sid] || instType;
+
+				// Only store address if it's good (not <LOCAL) OR if we don't have one yet
+				if (instAddr && !instAddr.startsWith('<LOCAL')) {
+					sidAddressMap[sid] = sidAddressMap[sid] || instAddr;
+				} else if (instAddr && !sidAddressMap[sid]) {
+					// Store <LOCAL as fallback only if we have nothing else
+					sidAddressMap[sid] = instAddr;
+				}
+
+				recordStartIdOccurrence(currentEntry.message, process, sid, ts, currentEntry.iso, currentEntry.raw, instType, instAddr);
+			}
 		}
 	}
 
