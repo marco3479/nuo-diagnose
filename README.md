@@ -1,149 +1,388 @@
-# nuo-diagnose (Bun project)
+# `nuo-diagnose`
 
-Small tool and UI to parse NuoAdmin logs and display a domain timeline.
+`nuo-diagnose` is a Bun-based log analysis tool for NuoDB diagnose data. It parses `nuoadmin.log` files, derives timeline-friendly domain events, and serves a browser UI for exploring process activity, database state changes, inferred domain state, and related files from a diagnose package.
 
-Files of interest
-- `nuoadmin-diagnose.ts` — Bun HTTP server: serves `public/` and exposes `GET /events.json?path=<log>` which returns parsed `DomainProcessStateMachine` events, process instances, and database state transitions as JSON.
-- `tests/mock/nuoadmin.log` — example log used for testing.
-- `tests/mock/db_state.log` — sample log with database state transitions.
-- `src_ui/app.tsx` — TSX React UI source for the stacked timeline view with filters, sorting, and database state visualization (compiled to `public/app.js`).
-- `public/` — static UI files served by the server (`index.html`, `app.js`, `styles.css`).
+This repository contains both:
 
-Prerequisites
+- a small HTTP server that parses logs and exposes JSON endpoints
+- a React UI that visualizes the parsed output as timelines and side panels
 
-- Bun (tested with Bun v1.x). Verify with:
+## What this project is for
 
-  ```bash
-  bun -v
-  ```
+Use this project when you want to:
 
-Quick start (development)
+- inspect `nuoadmin.log` activity over time
+- group log events into process instances by `sid`
+- visualize database state transitions and failure protocol activity
+- browse files from a support diagnose package without leaving the UI
+- compare server timelines inside a diagnose package
+- inspect inferred domain state snapshots derived from logs and `show-domain.txt` / `show-database.txt`
 
-1. Install deps (optional, no deps by default):
+## What newcomers should know first
 
-   ```bash
-   bun install
-   ```
+If you are opening this repository for the first time, start with these files:
 
-2. Start the development workflow (builds the UI in watch mode, restarts the server on backend changes, and auto-reloads the browser on bundle changes):
+- `package.json` — scripts and runtime expectations
+- `nuoadmin-diagnose.ts` — Bun server entry point and route wiring
+- `src/event-handlers.ts` — log parsing endpoints
+- `src/file-handlers.ts` — filesystem-backed endpoints for ticket/package browsing
+- `src_ui/app.tsx` — main React application state and UI orchestration
 
-   ```bash
-   bun run dev
-   ```
+At a high level, the app works like this:
 
-   By default the server listens on `http://localhost:8080`. You can override the port with `PORT` environment variable, for example:
+1. The browser UI calls server endpoints.
+2. The server reads log files or diagnose-package files from disk.
+3. Parsers convert raw log lines into structured events.
+4. Builders group events into instances, database state segments, and inferred domain state.
+5. The UI renders stacked timelines, filters, panels, and a file viewer.
 
-   ```bash
-   PORT=3002 bun run dev
-   ```
+## Repository layout
 
-3. Open the UI in a browser:
+### Runtime and entry points
 
-   - `http://localhost:8080/` — Stacked timeline UI with process instances grouped by address, database state visualization, filters, sorting, and event side-panel
-   - `http://localhost:8080/events.json?path=tests/mock/nuoadmin.log` — raw parsed JSON
+- `nuoadmin-diagnose.ts` — Bun HTTP server, static file serving, API route registration, dev live reload
+- `scripts/dev.ts` — local development runner that starts both the UI watcher and server watcher
+- `public/` — built browser assets and static files served by the server
 
-   Build & Run (production / bundle)
+### Backend parsing and file access
 
-   - Build the UI bundle (produces `public/app.js` and sourcemap):
+- `src/parsers.ts` — raw log parsing logic
+- `src/instance-builder.ts` — derives process instances from parsed events
+- `src/db-state.ts` — converts events into database state segments
+- `src/domain-state-builder.ts` — derives inferred domain state from event timelines
+- `src/domain-state-parser.ts` — parses `show-domain.txt` / `show-database.txt`
+- `src/event-handlers.ts` — handlers for log parsing endpoints
+- `src/file-handlers.ts` — handlers for ticket/package/server/file browsing
+- `src/types.ts` — backend type definitions
 
-      ```bash
-      bun run build
-      ```
+### Frontend UI
 
-   - Start the server (serves files from `public/`):
+- `src_ui/app.tsx` — main application component
+- `src_ui/hooks.ts` — data loading and UI hooks
+- `src_ui/domainState.ts` — domain-state timeline calculations
+- `src_ui/fileSearch.ts` — file and content search helpers
+- `src_ui/eventClassifier.ts` — event categorization logic used in the UI
+- `src_ui/components/` — reusable timeline, panel, filter, and file viewer components
 
-      ```bash
-      bun run start
-      ```
+### Tests and sample data
 
-   - Verify the endpoint and UI:
+- `nuoadmin-diagnose.test.ts` — Bun tests for ticket listing behavior
+- `tests/mock/` — local sample log fixtures used during development
 
-      ```bash
-      curl "http://localhost:8080/events.json?path=tests/mock/nuoadmin.log" | jq '. | {events: (.events|length), instances: (.instances|length), dbStates: .dbStates, range: .range}'
-      # Open browser: http://localhost:8080/
-      ```
+## Prerequisites
 
-   Notes about build output
+You need:
 
-   - After a successful `bun run build` you should see `public/app.js` (the bundled JS) and its sourcemap. The server serves `public/` directly so the UI will load the bundled file without remote ESM imports.
-   - `bun run dev` now starts both the UI watcher and the server watcher, so editing `src_ui/`, `src/`, `nuoadmin-diagnose.ts`, or files in `public/` updates the running app without a manual `bun run build`.
+- `bun` `>= 1.0.0`
+- access to the repository files
+- optional access to `/support/tickets/dassault` if you want to use the ticket/package workflow
 
-How parsing works
-
-- The server scans the specified log file and extracts lines that contain `DomainProcessStateMachine`.
-- Each matching line is parsed into an event with `ts` (ms epoch), `iso` (timestamp string), `process` (process id), `message`, and `raw` (original line).
-- The parser detects `sid` (startId) tokens and extracts engine type (TE/SM/AP) and address information to build process instances with start/end timestamps.
-- Database state transitions are captured from "Updated database … to … state=STATE" patterns, extracting the target state and database name.
-- The JSON response includes:
-  - `events`: array of all parsed events
-  - `byProcess`: events grouped by process
-  - `instances`: per-sid process instances with start/end, type, and address
-  - `dbStates`: database state segments per database name
-  - `range`: overall time range with `start`/`end` timestamps
-
-
-Rebuilding the UI (if you edit `src_ui/app.tsx`)
-
-- Use Bun's bundler (recommended) to create a browser-ready bundle that inlines dependencies and assets. The repo has these convenience scripts in `package.json`:
-
-   ```json
-   {
-      "scripts": {
-         "dev": "bun ./scripts/dev.ts",
-         "dev:server": "DEV_MODE=1 bun --watch ./nuoadmin-diagnose.ts",
-         "dev:ui": "bun build src_ui/app.tsx --outdir public --watch --sourcemap=linked --target browser --format esm",
-         "build": "bun build src_ui/app.tsx --outdir public --sourcemap=linked --target browser --format esm"
-      }
-   }
-   ```
-
-- One-off production build:
-
-   ```bash
-   bun run build
-   ```
-
-- Development incremental UI-only build:
-
-   ```bash
-   bun run watch
-   ```
-
-- Full development workflow with server restart + browser reload:
-
-   ```bash
-   bun run dev
-   ```
-
-- After building, `public/` will contain the bundled `app.js` and assets which the server will serve.
-
-Notes about React imports and bundling
-
-- If you use bare imports (`import React from 'react'`) in `src_ui/app.tsx`, the Bun bundler resolves and inlines the packages. If you prefer CDN ESM imports (e.g. `https://esm.sh/...`) that also works for rapid prototyping, but the bundler approach produces a single optimized bundle that avoids runtime network loads.
-- You may see bundler warnings about `react-dom/client` exports with certain `react`/`react-dom` combinations. The bundler usually handles resolution; if a warning appears, ensure `react` and `react-dom` versions are compatible (the repo currently lists `react`/`react-dom` in `package.json`).
-
-Why use Bun's bundler vs sucrase
-
-- `sucrase` is a fast transpiler (TypeScript/JSX -> JS) useful for quick dev conversions but it does not bundle or resolve dependencies; compiled output may still contain bare imports that the browser cannot fetch directly.
-- Bun's `bun build` bundles code, inlines dependencies, supports assets, sourcemaps, minification, code-splitting, and produces production-ready bundles — recommended for building the UI for deployment.
-
-Testing the endpoint locally
+Check Bun:
 
 ```bash
-curl "http://localhost:8080/events.json?path=tests/mock/nuoadmin.log" | jq '.'
+bun -v
 ```
 
-Troubleshooting
+## Installation
 
-- If you see `ENOENT: no such file or directory` for `public/favicon.ico`, add a placeholder file at `public/favicon.ico` (the server attempts to serve it).
-- If the server fails to start because a port is in use, set `PORT` to another number.
-- The TSX source uses remote ESM imports (or can be bundled). Ensure the compiled `public/app.js` contains playable imports for the browser (this project compiles to use `https://esm.sh` imports by default).
+Install dependencies:
 
-Next steps you might want
+```bash
+bun install
+```
 
-- Add a health endpoint (`/healthz`) for supervisors.
-- Add a persistent server runner (systemd/pm2) for long-running use.
-- Improve UI: more advanced filters, time-range zoom, export capabilities, or a legend for database states.
-- Add event-to-instance matching via connectKey for even more precise side-panel filtering.
+The project has a small dependency surface:
 
-License: MIT
+- `react`
+- `react-dom`
+- Bun and TypeScript type packages for development
+
+## Running the project
+
+### Development mode
+
+Start the UI watcher and the Bun server together:
+
+```bash
+bun run dev
+```
+
+What this does:
+
+- rebuilds `src_ui/app.tsx` into `public/app.js` in watch mode
+- restarts the Bun server when backend files change
+- enables lightweight browser reload when key files in `public/` change
+
+By default, the server runs on `http://localhost:8080`.
+
+To use a different port:
+
+```bash
+PORT=3002 bun run dev
+```
+
+### Build the UI bundle
+
+Create the browser bundle without starting the server:
+
+```bash
+bun run build
+```
+
+### Run only the server
+
+For a server-only workflow:
+
+```bash
+bun ./nuoadmin-diagnose.ts
+```
+
+Or in watch mode:
+
+```bash
+bun run dev:server
+```
+
+### Run only the UI watcher
+
+```bash
+bun run watch
+```
+
+## First-run workflow
+
+Once the server is running, open:
+
+- `http://localhost:8080/`
+- `http://localhost:8080/tickets`
+
+For a quick local parsing check, fetch the bundled sample log:
+
+```bash
+curl "http://localhost:8080/events.json?path=tests/mock/nuoadmin.log"
+```
+
+## Supported data sources
+
+The project supports two main workflows.
+
+### 1. Local log file parsing
+
+You can point the server at a local file path using `GET /events.json?path=...`.
+
+Example:
+
+```bash
+curl "http://localhost:8080/events.json?path=tests/mock/nuoadmin.log"
+```
+
+This is the easiest way to work locally when you just want to inspect a single log.
+
+### 2. Support ticket / diagnose package browsing
+
+The UI can browse support artifacts rooted at:
+
+```text
+/support/tickets/dassault
+```
+
+Expected layout:
+
+```text
+/support/tickets/dassault/
+  zd123456/
+    nuoadmin.log
+    diagnose-YYYY.../
+      admin/
+        server-a/
+          nuoadmin.log
+          nuoadmin.log.1
+          show-domain.txt
+          show-database.txt
+          ...other files...
+        server-b/
+          ...
+```
+
+Supported cases:
+
+- a standalone `nuoadmin.log` directly inside a ticket directory
+- a diagnose package containing an `admin/<server>/` tree
+
+## API overview
+
+The Bun server serves both static assets and JSON/text endpoints.
+
+### Core parsing endpoints
+
+| Endpoint | Purpose | Notes |
+| --- | --- | --- |
+| `GET /events.json?path=<file>` | Parse one log file from disk | Defaults to `tests/mock/nuoadmin.log` |
+| `GET /load-diagnose?ticket=<ticket>&package=<pkg>&server=<server>` | Parse all `nuoadmin.log*` files for one server | Special package value `__standalone__` reads `<ticket>/nuoadmin.log` |
+
+### Diagnose package navigation endpoints
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /list-tickets` | List available `zd*` ticket directories |
+| `GET /list-diagnose-packages?ticket=<ticket>` | List `diagnose-*` packages and detect standalone `nuoadmin.log` |
+| `GET /list-servers?ticket=<ticket>&package=<pkg>` | List server directories inside `admin/` |
+| `GET /server-time-ranges?ticket=<ticket>&package=<pkg>` | Estimate each server's start/end time window |
+| `GET /domain-states?ticket=<ticket>&package=<pkg>` | Parse domain snapshots from `show-domain.txt` or `show-database.txt` |
+| `GET /list-files?ticket=<ticket>&package=<pkg>&server=<server>` | List files available for the selected server |
+| `GET /file-content?ticket=<ticket>&package=<pkg>&server=<server>&file=<file>` | Return the contents of a selected file |
+
+### Static routes
+
+- `/` and `/tickets` serve the SPA entry page from `public/index.html`
+- `public/` assets are served directly by `nuoadmin-diagnose.ts`
+
+## What the parser returns
+
+The main parsing endpoints return structured JSON with fields such as:
+
+- `events` — parsed log events in timestamp order
+- `byProcess` — events grouped by process identifier
+- `instances` — grouped process instances with `sid`, start, end, type, and address
+- `dbStates` — per-database state segments for timeline rendering
+- `failureProtocols` — extracted failure protocol activity
+- `inferredDomainStates` — derived domain-state snapshots for diagnose-package loads
+- `range` — overall parsed time window
+
+Important backend types live in `src/types.ts`.
+
+## UI overview
+
+The UI is a single-page React application bundled into `public/app.js`.
+
+Main capabilities include:
+
+- timeline rendering for process instances, servers, APs, and database state
+- range selection and time-point scrubbing
+- filtering by process type, server, `sid`, and log level
+- event classification and side-panel inspection
+- domain-state panel for snapshot inspection over time
+- file browser and in-file search for server artifacts
+
+The main UI state lives in `src_ui/app.tsx`, while reusable pieces live under `src_ui/components/`.
+
+## Development workflow
+
+### Useful scripts
+
+| Command | Purpose |
+| --- | --- |
+| `bun run dev` | Run server watcher and UI watcher together |
+| `bun run dev:server` | Run only the Bun server in watch mode |
+| `bun run build` | Build the frontend bundle into `public/` |
+| `bun run watch` | Watch and rebuild only the frontend bundle |
+| `bun test` | Run Bun tests |
+
+### Recommended local loop
+
+```bash
+bun install
+bun run dev
+```
+
+Then:
+
+- edit backend files in `src/` or `nuoadmin-diagnose.ts`
+- edit UI files in `src_ui/`
+- refresh the browser if needed; dev mode also injects live reload for key static files
+
+## Architecture notes
+
+### Backend flow
+
+1. Request hits `nuoadmin-diagnose.ts`.
+2. Route delegates to `src/event-handlers.ts` or `src/file-handlers.ts`.
+3. Parsers in `src/parsers.ts` extract log events from raw text.
+4. Builders derive higher-level structures:
+   - `src/instance-builder.ts`
+   - `src/db-state.ts`
+   - `src/domain-state-builder.ts`
+5. The server returns JSON to the UI.
+
+### Frontend flow
+
+1. `src_ui/hooks.ts` fetches data from the server.
+2. `src_ui/app.tsx` stores global page state and selection state.
+3. Timeline and panel components render filtered data.
+4. Search helpers in `src_ui/fileSearch.ts` support file and content searching.
+
+## Testing
+
+Run tests with:
+
+```bash
+bun test
+```
+
+Current test coverage is light and focused on filesystem-backed ticket listing behavior.
+
+Important note:
+
+- `nuoadmin-diagnose.test.ts` expects the `/support/tickets/dassault` directory to exist and contain `zd*` directories
+- if that directory is not present on your machine, those tests will fail for environment reasons rather than application logic
+
+## Troubleshooting
+
+### The UI loads, but no ticket data appears
+
+Check whether the server has access to:
+
+```text
+/support/tickets/dassault
+```
+
+The ticket/package workflow depends on that path.
+
+### The sample log works, but diagnose-package views do not
+
+Confirm that your selected ticket follows the expected directory layout, especially:
+
+- `<ticket>/nuoadmin.log` for standalone mode, or
+- `<ticket>/<package>/admin/<server>/nuoadmin.log*` for package mode
+
+### The browser shows stale assets
+
+Rebuild the UI bundle:
+
+```bash
+bun run build
+```
+
+Or use development mode:
+
+```bash
+bun run dev
+```
+
+### A server port is already in use
+
+Run on a different port:
+
+```bash
+PORT=3002 bun run dev
+```
+
+## Current limitations
+
+- The support root is currently hardcoded to `/support/tickets/dassault` in `src/file-handlers.ts`.
+- Test coverage is limited and includes environment-specific assumptions.
+- The UI contains a `collection` mode scaffold, but the backend route `GET /list-collection` is not implemented in the current server.
+
+## Suggested places to contribute
+
+Good first improvements include:
+
+- making the support root configurable via environment variable
+- adding tests around parsing and builder logic using local fixtures
+- documenting example response payloads for each endpoint
+- expanding the file browser and export workflows
+- implementing or removing the unfinished collection-mode path
+
+## License
+
+MIT
