@@ -10,6 +10,10 @@
 
     // Bundler mode
     "moduleResolution": "bundler",
+    "paths": {
+      "fs": ["./node_modules/@types/node/fs.d.ts"],
+      "node:fs": ["./node_modules/@types/node/fs.d.ts"]
+    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,

@@ -6,7 +6,7 @@
 declare const Bun: any;
 declare const process: any;
 
-import { watch } from 'node:fs';
+import { watch } from 'fs';
 import { handleEvents, handleLoadDiagnose } from './src/event-handlers';
 import {
 	handleListTickets,
@@ -24,8 +24,8 @@ const reloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 let reloadVersion = 0;
 
 if (DEV_MODE) {
-	watch('public', (_eventType, filename) => {
-		if (!filename) return;
+	watch('public', (_eventType: unknown, filename: unknown) => {
+		if (typeof filename !== 'string') return;
 		if (filename === 'app.js' || filename === 'styles.css' || filename === 'index.html') {
 			broadcastReload();
 		}
