@@ -35,6 +35,8 @@ export function buildDbStates(events: LogEvent[]): Record<string, DbStateSegment
 				end: next ? next.ts : lastEvent?.ts ?? cur.ts + 1,
 				iso: cur.iso,
 				message: cur.message,
+				raw: cur.raw,
+				fileSource: cur.fileSource,
 			});
 		}
 		dbStates[db] = segs;

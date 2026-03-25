@@ -1,4 +1,4 @@
-import React, { useEffect, useState, type JSX } from 'react';
+import React, { useEffect, useState, useRef, type JSX } from 'react';
 import { createRoot } from 'react-dom/client';
 import assert from '../assert';
 import type {
@@ -15,13 +15,28 @@ import type {
   DomainStateSnapshot,
 } from './types';
 import {
-  stateColor,
   getInstanceType,
-  calculateProcessColor,
   sortInstances,
   groupInstancesByAddress,
   sortAddressesByEarliestStart,
 } from './utils';
+import {
+  clampCurrentTimePoint,
+  getAdjacentTimePoint,
+  getCurrentDomainStateSnapshot,
+  getDomainStateFrame,
+  getPreviousDomainStateSnapshot,
+  getVisibleDomainStateTimestamps,
+  mergeDomainStates,
+} from './domainState';
+import {
+  countMatches,
+  countRegexMatches,
+  findContentMatches,
+  getFilteredFiles,
+  type ContentMatch,
+  type FileSearchResult,
+} from './fileSearch';
 import {
   useTheme,
   useMousePosition,
@@ -30,6 +45,7 @@ import {
   useZdTickets,
   loadFromFile,
   loadFromNuoSupport,
+  loadCollectionItems,
   loadDiagnosePackages,
   loadServerTimeRanges,
   loadDomainStates,
@@ -39,16 +55,17 @@ import {
   Controls,
   ServerTimeline,
   FilterBar,
+  FilterControls,
   RangeSlider,
   Tooltip,
   LoadingSpinner,
   DatabaseTimeline,
-  ApTimeline,
   UnclassifiedEventsRow,
   ProcessTimeline,
   LogPanel,
   TimePointSlider,
   DomainStatePanel,
+  FileViewer,
 } from './components';
 
 declare const fetch: any;
@@ -57,9 +74,10 @@ declare const window: any;
 
 function StackApp(): JSX.Element {
   const [path, setPath] = useState('tests/mock/nuoadmin.log');
-  // Detect initial mode from URL - default to nuosupport unless explicitly at root with file mode
-  const initialMode = window.location.pathname === '/' || window.location.pathname.startsWith('/nuosupport') ? 'nuosupport' : 'file';
-  const [loadMode, setLoadMode] = useState<'file' | 'nuosupport'>(initialMode);
+  const initialMode = window.location.pathname.startsWith('/collection') ? 'collection' : 'tickets';
+  const [loadMode, setLoadMode] = useState<'collection' | 'tickets'>(initialMode);
+  const [collectionItems, setCollectionItems] = useState<string[]>([]);
+  const [selectedCollection, setSelectedCollection] = useState<string>('');
   const [selectedTicket, setSelectedTicket] = useState<string>('');
   const [diagnosePackages, setDiagnosePackages] = useState<string[]>([]);
   const [selectedPackage, setSelectedPackage] = useState<string>('');
@@ -80,7 +98,6 @@ function StackApp(): JSX.Element {
   const [globalEnd, setGlobalEnd] = useState<number>(Date.now() + 1);
   const [loading, setLoading] = useState(false);
   const [loadedServer, setLoadedServer] = useState<string>('');
-  // Table filters & sorting
   const [filterType, setFilterType] = useState<string>('ALL');
   const [filterServers, setFilterServers] = useState<Set<string>>(new Set());
   const [filterSids, setFilterSids] = useState<Set<string>>(new Set());
@@ -103,6 +120,8 @@ function StackApp(): JSX.Element {
   const [domainPanelOpen, setDomainPanelOpen] = useState(true);
   const [domainPanelWidth, setDomainPanelWidth] = useState(600);
   const [isResizing, setIsResizing] = useState(false);
+  const [timelineHeight, setTimelineHeight] = useState(60);
+  const [isResizingTimeline, setIsResizingTimeline] = useState(false);
   const [mainViewMode, setMainViewMode] = useState<'timeline' | 'files'>('timeline');
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -110,29 +129,37 @@ function StackApp(): JSX.Element {
   const [fileListSearch, setFileListSearch] = useState<string>('');
   const [fileContentSearch, setFileContentSearch] = useState<string>('');
   const [currentMatchIndex, setCurrentMatchIndex] = useState<number>(0);
-  const [fileSearchResults, setFileSearchResults] = useState<{file: string, matches: number}[]>([]);
+  const [fileSearchResults, setFileSearchResults] = useState<FileSearchResult[]>([]);
   const [isSearchingFiles, setIsSearchingFiles] = useState<boolean>(false);
   const [fileSearchRegex, setFileSearchRegex] = useState<boolean>(false);
   const [fileContentSearchRegex, setFileContentSearchRegex] = useState<boolean>(false);
-  const [contentMatches, setContentMatches] = useState<{index: number, length: number}[]>([]);
+  const [contentMatches, setContentMatches] = useState<ContentMatch[]>([]);
   const [isCalculatingMatches, setIsCalculatingMatches] = useState<boolean>(false);
+  const [logLevelFilter, setLogLevelFilter] = useState<string>('All levels');
 
-  // Use custom hooks
+  const rangeStartRef = useRef<number | null>(rangeStart);
+  const rangeEndRef = useRef<number | null>(rangeEnd);
+  const globalStartRef = useRef<number>(globalStart);
+  const globalEndRef = useRef<number>(globalEnd);
+  const dragStartXRef = useRef<number>(dragStartX);
+  const dragStartRangeRef = useRef<{start: number, end: number}>(dragStartRange);
+
+  useEffect(() => { rangeStartRef.current = rangeStart; }, [rangeStart]);
+  useEffect(() => { rangeEndRef.current = rangeEnd; }, [rangeEnd]);
+  useEffect(() => { globalStartRef.current = globalStart; }, [globalStart]);
+  useEffect(() => { globalEndRef.current = globalEnd; }, [globalEnd]);
+  useEffect(() => { dragStartXRef.current = dragStartX; }, [dragStartX]);
+  useEffect(() => { dragStartRangeRef.current = dragStartRange; }, [dragStartRange]);
+
   const { theme, setTheme } = useTheme('dark');
   const { mousePos, setMousePos } = useMousePosition();
   const zdTickets = useZdTickets();
-  
+
   useDropdownOutsideClick(serverDropdownOpen, sidDropdownOpen, setServerDropdownOpen, setSidDropdownOpen);
   useUrlNavigation(loadMode);
 
-  // Debounce timer for file search
   useEffect(() => {
-    if (!fileListSearch) {
-      setFileSearchResults([]);
-      return;
-    }
-
-    if (fileListSearch.length < 3) {
+    if (!fileListSearch || fileListSearch.length < 3) {
       setFileSearchResults([]);
       return;
     }
@@ -144,7 +171,6 @@ function StackApp(): JSX.Element {
     return () => clearTimeout(timer);
   }, [fileListSearch, loadMode, selectedTicket, selectedPackage, selectedServer, availableFiles, fileSearchRegex]);
 
-  // Debounced content match calculation
   useEffect(() => {
     if (!fileContentSearch || !fileContent) {
       setContentMatches([]);
@@ -154,32 +180,7 @@ function StackApp(): JSX.Element {
 
     setIsCalculatingMatches(true);
     const timer = setTimeout(() => {
-      const matches: {index: number, length: number}[] = [];
-      
-      if (fileContentSearchRegex) {
-        try {
-          const regex = new RegExp(fileContentSearch, 'gi');
-          let match;
-          while ((match = regex.exec(fileContent)) !== null) {
-            matches.push({index: match.index, length: match[0].length});
-            // Prevent infinite loop on zero-length matches
-            if (match[0].length === 0) {
-              regex.lastIndex++;
-            }
-          }
-        } catch (e) {
-          // Invalid regex, ignore
-        }
-      } else {
-        const searchLower = fileContentSearch.toLowerCase();
-        const contentLower = fileContent.toLowerCase();
-        let index = 0;
-        while ((index = contentLower.indexOf(searchLower, index)) !== -1) {
-          matches.push({index, length: fileContentSearch.length});
-          index += searchLower.length;
-        }
-      }
-      
+      const matches = findContentMatches(fileContent, fileContentSearch, fileContentSearchRegex);
       setContentMatches(matches);
       setCurrentMatchIndex(0);
       setIsCalculatingMatches(false);
@@ -188,18 +189,48 @@ function StackApp(): JSX.Element {
     return () => clearTimeout(timer);
   }, [fileContentSearch, fileContent, fileContentSearchRegex]);
 
-  // Handle panel resize
+  useEffect(() => {
+    if (!isResizingTimeline) return;
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const appElement = document.querySelector('.app');
+      if (!appElement) return;
+      const rect = appElement.getBoundingClientRect();
+      const relativeY = e.clientY - rect.top;
+      const percentage = (relativeY / rect.height) * 100;
+      const clampedPercentage = Math.max(30, Math.min(80, percentage));
+      setTimelineHeight(clampedPercentage);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingTimeline(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, [isResizingTimeline]);
+
   useEffect(() => {
     if (!isResizing) return;
 
-    // Prevent text selection during resize
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
 
     const handleMouseMove = (e: MouseEvent) => {
       const windowWidth = window.innerWidth;
       const newWidth = windowWidth - e.clientX;
-      // Clamp width between 300px and 800px
       const clampedWidth = Math.max(300, Math.min(800, newWidth));
       setDomainPanelWidth(clampedWidth);
     };
@@ -221,7 +252,13 @@ function StackApp(): JSX.Element {
     };
   }, [isResizing]);
 
-  async function load(p = path) {
+  useEffect(() => {
+    if (loadMode === 'collection') {
+      loadCollectionItems().then(setCollectionItems);
+    }
+  }, [loadMode]);
+
+  async function load(p = selectedCollection) {
     setLoading(true);
     try {
       const data = await loadFromFile(p);
@@ -230,7 +267,7 @@ function StackApp(): JSX.Element {
       setDbStates(data.dbStates);
       setFailureProtocols(data.failureProtocols);
       setLoadedServer('');
-      
+
       if (data.range && data.range.start && data.range.end) {
         setGlobalStart(data.range.start);
         setGlobalEnd(data.range.end);
@@ -251,15 +288,12 @@ function StackApp(): JSX.Element {
     }
   }
 
-  // Load list of files from the server directory
   async function loadFileList() {
-    if (loadMode === 'nuosupport' && selectedTicket && selectedPackage && selectedServer) {
+    if (loadMode === 'tickets' && selectedTicket && selectedPackage && selectedServer) {
       console.log('[loadFileList] Loading files for:', { selectedTicket, selectedPackage, selectedServer });
       try {
         const res = await fetch(
-          `/list-files?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(
-            selectedPackage
-          )}&server=${encodeURIComponent(selectedServer)}`
+          `/list-files?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}&server=${encodeURIComponent(selectedServer)}`
         );
         const json = await res.json();
         console.log('[loadFileList] Response:', json);
@@ -279,52 +313,26 @@ function StackApp(): JSX.Element {
     }
   }
 
-  // Filter files based on search results
-  const filteredFiles = fileListSearch && fileSearchResults.length > 0
-    ? fileSearchResults.map(r => r.file)
-    : fileListSearch
-    ? []
-    : availableFiles;
+  const filteredFiles = getFilteredFiles(availableFiles, fileListSearch, fileSearchResults);
 
-  // Content matches are now calculated in useEffect above
-
-  // Search for text across all files
   async function searchAcrossFiles(searchText: string) {
-    if (!searchText || loadMode !== 'nuosupport' || !selectedTicket || !selectedPackage || !selectedServer) {
+    if (!searchText || loadMode !== 'tickets' || !selectedTicket || !selectedPackage || !selectedServer) {
       setFileSearchResults([]);
       return;
     }
 
     setIsSearchingFiles(true);
-    const results: {file: string, matches: number}[] = [];
+    const results: FileSearchResult[] = [];
 
     try {
       for (const file of availableFiles) {
         const res = await fetch(
-          `/file-content?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(
-            selectedPackage
-          )}&server=${encodeURIComponent(selectedServer)}&file=${encodeURIComponent(file)}`
+          `/file-content?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}&server=${encodeURIComponent(selectedServer)}&file=${encodeURIComponent(file)}`
         );
         const content = await res.text();
-        let matchCount = 0;
-
-        if (fileSearchRegex) {
-          try {
-            const regex = new RegExp(searchText, 'gi');
-            const matches = content.match(regex);
-            matchCount = matches ? matches.length : 0;
-          } catch (e) {
-            // Invalid regex, skip this file
-          }
-        } else {
-          const searchLower = searchText.toLowerCase();
-          const contentLower = content.toLowerCase();
-          let index = 0;
-          while ((index = contentLower.indexOf(searchLower, index)) !== -1) {
-            matchCount++;
-            index += searchLower.length;
-          }
-        }
+        const matchCount = fileSearchRegex
+          ? countRegexMatches(content, searchText)
+          : countMatches(content, searchText);
 
         if (matchCount > 0) {
           results.push({ file, matches: matchCount });
@@ -338,14 +346,11 @@ function StackApp(): JSX.Element {
     }
   }
 
-  // Load content of a specific file
   async function loadFileContent(filename: string) {
-    if (loadMode === 'nuosupport' && selectedTicket && selectedPackage && selectedServer) {
+    if (loadMode === 'tickets' && selectedTicket && selectedPackage && selectedServer) {
       try {
         const res = await fetch(
-          `/file-content?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(
-            selectedPackage
-          )}&server=${encodeURIComponent(selectedServer)}&file=${encodeURIComponent(filename)}`
+          `/file-content?ticket=${encodeURIComponent(selectedTicket)}&package=${encodeURIComponent(selectedPackage)}&server=${encodeURIComponent(selectedServer)}&file=${encodeURIComponent(filename)}`
         );
         const text = await res.text();
         setFileContent(text);
@@ -358,14 +363,12 @@ function StackApp(): JSX.Element {
     }
   }
 
-  // Navigate to next search match
   function goToNextMatch() {
     if (contentMatches.length > 0) {
       setCurrentMatchIndex((prev) => (prev + 1) % contentMatches.length);
     }
   }
 
-  // Navigate to previous search match
   function goToPrevMatch() {
     if (contentMatches.length > 0) {
       setCurrentMatchIndex((prev) => (prev - 1 + contentMatches.length) % contentMatches.length);
@@ -375,7 +378,7 @@ function StackApp(): JSX.Element {
   // Load files when server changes or when switching to files view
   useEffect(() => {
     console.log('[useEffect] Checking if should load files:', { loadMode, selectedServer, mainViewMode, selectedTicket, selectedPackage });
-    if (loadMode === 'nuosupport' && selectedTicket && selectedPackage && selectedServer && mainViewMode === 'files') {
+    if (loadMode === 'tickets' && selectedTicket && selectedPackage && selectedServer && mainViewMode === 'files') {
       console.log('[useEffect] Triggering loadFileList');
       loadFileList();
     }
@@ -433,36 +436,12 @@ function StackApp(): JSX.Element {
   }
 
   // Merge reference states from show-domain.txt with inferred states
-  function mergeDomainStates(
-    referenceStates: DomainStateSnapshot[],
-    inferredStates: DomainStateSnapshot[]
-  ): DomainStateSnapshot[] {
-    // Use inferred states as the base timeline
-    const merged = [...inferredStates];
-    
-    // Inject reference states and mark them
-    for (const refState of referenceStates) {
-      merged.push({
-        ...refState,
-        state: {
-          ...refState.state,
-          serverVersion: refState.state.serverVersion + ' (reference)',
-        },
-      });
-    }
-    
-    // Sort by timestamp
-    merged.sort((a, b) => a.timestamp - b.timestamp);
-    
-    return merged;
-  }
-
-  // Parse URL parameters like /nuosupport/zd12345/diagnose-20231201/server01
+  // Parse URL parameters like /tickets/zd12345/diagnose-20231201/server01
   useEffect(() => {
     const urlPath = window.location.pathname;
-    const fullMatch = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
-    const packageMatch = urlPath.match(/\/nuosupport\/([^\/]+)\/([^\/]+)$/);
-    const ticketMatch = urlPath.match(/\/nuosupport\/([^\/]+)$/);
+    const fullMatch = urlPath.match(/\/tickets\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+    const packageMatch = urlPath.match(/\/tickets\/([^\/]+)\/([^\/]+)$/);
+    const ticketMatch = urlPath.match(/\/tickets\/([^\/]+)$/);
     
     if (zdTickets.length > 0) {
       if (fullMatch) {
@@ -494,8 +473,8 @@ function StackApp(): JSX.Element {
     setServers([]);
     setServerTimeRanges([]);
     
-    if (loadMode === 'nuosupport' && !(window as any).__initialPackage) {
-      window.history.pushState({}, '', `/nuosupport/${selectedTicket}`);
+    if (loadMode === 'tickets' && !(window as any).__initialPackage) {
+      window.history.pushState({}, '', `/tickets/${selectedTicket}`);
     }
     
     loadDiagnosePackages(selectedTicket)
@@ -527,8 +506,17 @@ function StackApp(): JSX.Element {
       return;
     }
     
-    if (loadMode === 'nuosupport' && !(window as any).__initialServer) {
-      window.history.pushState({}, '', `/nuosupport/${selectedTicket}/${selectedPackage}`);
+    // Handle standalone log - skip server fetching
+    if (selectedPackage === '__standalone__') {
+      setServers([]);
+      setSelectedServer('standalone');
+      setServerTimeRanges([]);
+      setDomainStates([]);
+      return;
+    }
+    
+    if (loadMode === 'tickets' && !(window as any).__initialServer) {
+      window.history.pushState({}, '', `/tickets/${selectedTicket}/${selectedPackage}`);
     }
     
     setSelectedServer('');
@@ -570,66 +558,68 @@ function StackApp(): JSX.Element {
 
   // Automatically load when server is selected
   useEffect(() => {
-    if (selectedServer && selectedTicket && selectedPackage && loadMode === 'nuosupport') {
-      const newPath = `/nuosupport/${selectedTicket}/${selectedPackage}/${selectedServer}`;
+    if (selectedServer && selectedTicket && selectedPackage && loadMode === 'tickets') {
+      const newPath = selectedPackage === '__standalone__' 
+        ? `/tickets/${selectedTicket}/standalone`
+        : `/tickets/${selectedTicket}/${selectedPackage}/${selectedServer}`;
       window.history.pushState({}, '', newPath);
       loadFromNuoSupportHandler();
     }
   }, [selectedServer]);
 
+  const gStart = rangeStart ?? globalStart;
+  const gEnd = rangeEnd ?? globalEnd;
+  const span = Math.max(1, gEnd - gStart);
+
+  const visibleDomainStates = React.useMemo(() => {
+    return domainStates.filter((snapshot) => snapshot.timestamp >= gStart && snapshot.timestamp <= gEnd);
+  }, [domainStates, gStart, gEnd]);
+
+  const visibleDomainStateTimestamps = React.useMemo(
+    () => getVisibleDomainStateTimestamps(domainStates, gStart, gEnd),
+    [domainStates, gStart, gEnd]
+  );
+
+  useEffect(() => {
+    const nextTimePoint = clampCurrentTimePoint(currentTimePoint, visibleDomainStateTimestamps);
+    if (nextTimePoint !== currentTimePoint) {
+      setCurrentTimePoint(nextTimePoint);
+    }
+  }, [currentTimePoint, visibleDomainStateTimestamps]);
+
   // Domain state navigation functions
   const handleNextState = () => {
-    if (domainStates.length === 0) return;
-    if (!currentTimePoint) {
-      setCurrentTimePoint(domainStates[0]?.timestamp || gStart);
-      return;
+    const nextTimePoint = getAdjacentTimePoint(visibleDomainStateTimestamps, currentTimePoint, 'next', gStart);
+    if (typeof nextTimePoint === 'number') {
+      setCurrentTimePoint(nextTimePoint);
     }
-    // Find next state after current time
-    const nextState = domainStates.find(ds => ds.timestamp > currentTimePoint);
-    if (nextState) setCurrentTimePoint(nextState.timestamp);
   };
 
   const handlePrevState = () => {
-    if (domainStates.length === 0) return;
-    if (!currentTimePoint) {
-      setCurrentTimePoint(domainStates[domainStates.length - 1]?.timestamp || gStart);
-      return;
-    }
-    // Find previous state before current time
-    const prevStates = domainStates.filter(ds => ds.timestamp < currentTimePoint);
-    if (prevStates.length > 0) {
-      const prevState = prevStates[prevStates.length - 1];
-      if (prevState) setCurrentTimePoint(prevState.timestamp);
+    const previousTimePoint = getAdjacentTimePoint(visibleDomainStateTimestamps, currentTimePoint, 'prev', gStart);
+    if (typeof previousTimePoint === 'number') {
+      setCurrentTimePoint(previousTimePoint);
     }
   };
 
   // Get current domain state based on timepoint - find the most recent state at or before the timepoint
-  const currentDomainStateSnapshot = React.useMemo(() => {
-    if (!currentTimePoint || domainStates.length === 0) return null;
-    
-    // Find all states at or before the current timepoint
-    const statesBeforeOrAt = domainStates.filter(ds => ds.timestamp <= currentTimePoint);
-    if (statesBeforeOrAt.length === 0) return null;
-    
-    // Return the most recent one
-    return statesBeforeOrAt[statesBeforeOrAt.length - 1] || null;
-  }, [currentTimePoint, domainStates]);
+  const currentDomainStateSnapshot = React.useMemo(
+    () => getCurrentDomainStateSnapshot(visibleDomainStates, currentTimePoint),
+    [currentTimePoint, visibleDomainStates]
+  );
 
   const currentDomainState = currentDomainStateSnapshot?.state || null;
 
   // Get previous domain state for change detection
-  const previousDomainStateSnapshot = React.useMemo(() => {
-    if (!currentDomainStateSnapshot || domainStates.length === 0) return null;
-    
-    const currentIndex = domainStates.findIndex(ds => ds.timestamp === currentDomainStateSnapshot.timestamp);
-    if (currentIndex <= 0) return null;
-    
-    return domainStates[currentIndex - 1] || null;
-  }, [currentDomainStateSnapshot, domainStates]);
+  const previousDomainStateSnapshot = React.useMemo(
+    () => getPreviousDomainStateSnapshot(visibleDomainStates, currentDomainStateSnapshot),
+    [currentDomainStateSnapshot, visibleDomainStates]
+  );
 
-  const span = Math.max(1, (rangeEnd ?? globalEnd) - (rangeStart ?? globalStart));
-  const gStart = rangeStart ?? globalStart;
-  const gEnd = rangeEnd ?? globalEnd;
+  const currentDomainStateFrame = React.useMemo(
+    () => getDomainStateFrame(visibleDomainStates, currentDomainStateSnapshot),
+    [currentDomainStateSnapshot, visibleDomainStates]
+  );
 
   // visible instances intersecting selection
   const visible = instances.filter(i => {
@@ -675,10 +665,22 @@ function StackApp(): JSX.Element {
   const { processEvents, databaseEvents, unclassifiedEvents } = classifyEvents(events, dbStates);
   
   const hasUnclassified = unclassifiedEvents.length > 0;
+  const unclassifiedRows: TableRow[] = hasUnclassified
+    ? [{ type: 'unclassified', key: 'unclassified' }]
+    : [];
+  const databaseRows: TableRow[] = Object.keys(dbStates || {}).map((db) => ({
+    type: 'db',
+    key: db,
+  }));
+  const instanceRows: TableRow[] = visibleSorted.map((inst, idx) => ({
+    type: 'instance',
+    key: `inst-${idx}`,
+    instance: inst,
+  }));
   const allTableRows: TableRow[] = [
-    ...(hasUnclassified ? [{ type: 'unclassified' as const, key: 'unclassified' }] : []),
-    ...Object.keys(dbStates || {}).map(db => ({ type: 'db' as const, key: db })), 
-    ...visibleSorted.map((inst, idx) => ({ type: 'instance' as const, key: `inst-${idx}`, instance: inst }))
+    ...unclassifiedRows,
+    ...databaseRows,
+    ...instanceRows,
   ];
 
   const toggleSort = (key: SortKey) => {
@@ -702,27 +704,27 @@ function StackApp(): JSX.Element {
       if (!slider) return;
       const rect = slider.getBoundingClientRect();
       const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const ts = globalStart + fraction * (globalEnd - globalStart);
+      const ts = globalStartRef.current + fraction * (globalEndRef.current - globalStartRef.current);
       if (dragging === 'start') {
-        const currentEnd = rangeEnd ?? globalEnd;
+        const currentEnd = rangeEndRef.current ?? globalEndRef.current;
         setRangeStart(Math.min(ts, currentEnd));
       } else if (dragging === 'end') {
-        const currentStart = rangeStart ?? globalStart;
+        const currentStart = rangeStartRef.current ?? globalStartRef.current;
         setRangeEnd(Math.max(ts, currentStart));
       } else if (dragging === 'range') {
-        const deltaX = e.clientX - dragStartX;
+        const deltaX = e.clientX - dragStartXRef.current;
         const deltaFraction = deltaX / rect.width;
-        const deltaTs = deltaFraction * (globalEnd - globalStart);
-        const span = dragStartRange.end - dragStartRange.start;
-        let newStart = dragStartRange.start + deltaTs;
-        let newEnd = dragStartRange.end + deltaTs;
-        if (newStart < globalStart) {
-          newStart = globalStart;
-          newEnd = globalStart + span;
+        const deltaTs = deltaFraction * (globalEndRef.current - globalStartRef.current);
+        const span = dragStartRangeRef.current.end - dragStartRangeRef.current.start;
+        let newStart = dragStartRangeRef.current.start + deltaTs;
+        let newEnd = dragStartRangeRef.current.end + deltaTs;
+        if (newStart < globalStartRef.current) {
+          newStart = globalStartRef.current;
+          newEnd = globalStartRef.current + span;
         }
-        if (newEnd > globalEnd) {
-          newEnd = globalEnd;
-          newStart = globalEnd - span;
+        if (newEnd > globalEndRef.current) {
+          newEnd = globalEndRef.current;
+          newStart = globalEndRef.current - span;
         }
         setRangeStart(newStart);
         setRangeEnd(newEnd);
@@ -735,7 +737,7 @@ function StackApp(): JSX.Element {
       (document as any).removeEventListener('mousemove', handleMouseMove);
       (document as any).removeEventListener('mouseup', handleMouseUp);
     };
-  }, [dragging, globalStart, globalEnd, rangeStart, rangeEnd, dragStartX, dragStartRange]);
+  }, [dragging]);
 
   // Keyboard navigation for table rows
   useEffect(() => {
@@ -955,13 +957,15 @@ function StackApp(): JSX.Element {
         selectedPackage={selectedPackage}
         setSelectedPackage={setSelectedPackage}
         diagnosePackages={diagnosePackages}
+        collectionItems={collectionItems}
+        selectedCollection={selectedCollection}
+        setSelectedCollection={setSelectedCollection}
         theme={theme}
         setTheme={setTheme}
         domainStatePanelOpen={domainPanelOpen}
         setDomainStatePanelOpen={setDomainPanelOpen}
         mainViewMode={mainViewMode}
         setMainViewMode={setMainViewMode}
-        loadMode={loadMode}
         selectedServer={selectedServer}
         onFilesViewClick={loadFileList}
       />
@@ -976,35 +980,119 @@ function StackApp(): JSX.Element {
         setApsCollapsed={setApsCollapsed}
         setHoveredBar={setHoveredBar}
         setMousePos={setMousePos}
+        loadedServer={loadedServer}
       />
 
-      <LoadingSpinner visible={loading && loadMode === 'nuosupport'} />
+      <LoadingSpinner visible={loading && loadMode === 'tickets'} />
 
       {/* Main content - hidden when loading */}
-      {(!loading || loadMode !== 'nuosupport') && mainViewMode === 'timeline' && (
-      <div className="main-layout">
+      {(!loading || loadMode !== 'tickets') && mainViewMode === 'timeline' && (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        {/* Timeline and Domain State Panel Row */}
         <div 
-          className="timeline-container" 
-          style={{ 
-            flex: domainPanelOpen ? 'none' : '1',
-            width: domainPanelOpen ? `calc(100% - ${domainPanelWidth}px - 16px)` : '100%'
+          className="main-layout"
+          style={{
+            flex: selectedSid !== null || selectedDb !== null || selectedAp !== null || selectedUnclassified 
+              ? `0 0 ${timelineHeight}%` 
+              : '1',
+            minHeight: selectedSid !== null || selectedDb !== null || selectedAp !== null || selectedUnclassified 
+              ? '200px' 
+              : undefined,
           }}
         >
-          <div className="timeline" onMouseMove={(e: any) => setMousePos({x: e.clientX, y: e.clientY})}>
-            {/* TimePoint Slider - shows above database timeline when domain states are available */}
-            {domainStates.length > 0 && (
-              <div className="timepoint-slider-wrapper">
-                <TimePointSlider
-                  globalStart={gStart}
-                  globalEnd={gEnd}
-                  currentTime={currentTimePoint || gStart}
-                  setCurrentTime={setCurrentTimePoint}
-                  allStateTimestamps={domainStates.map(ds => ds.timestamp)}
-                  onNext={handleNextState}
-                  onPrev={handlePrevState}
+          <div 
+            className="timeline-container" 
+            style={{ 
+              flex: domainPanelOpen ? 'none' : '1',
+              width: domainPanelOpen ? `calc(100% - ${domainPanelWidth}px - 16px)` : '100%'
+            }}
+          >
+            <div 
+              className="timeline" 
+              onMouseMove={(e: any) => setMousePos({x: e.clientX, y: e.clientY})}
+            >
+            <FilterBar
+              filterType={filterType}
+              setFilterType={setFilterType}
+              filterServers={filterServers}
+              setFilterServers={setFilterServers}
+              filterSids={filterSids}
+              setFilterSids={setFilterSids}
+              typeOptions={typeOptions}
+              allServers={allServers}
+              allSids={allSids}
+              serverDropdownOpen={serverDropdownOpen}
+              setServerDropdownOpen={setServerDropdownOpen}
+              sidDropdownOpen={sidDropdownOpen}
+              setSidDropdownOpen={setSidDropdownOpen}
+              globalStart={globalStart}
+              globalEnd={globalEnd}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              setRangeStart={setRangeStart}
+              setRangeEnd={setRangeEnd}
+            />
+
+            <RangeSlider
+              globalStart={globalStart}
+              globalEnd={globalEnd}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              setRangeStart={setRangeStart}
+              setRangeEnd={setRangeEnd}
+              dragging={dragging}
+              setDragging={setDragging}
+              setDragStartX={setDragStartX}
+              setDragStartRange={setDragStartRange}
+              allRowsBySid={allRowsBySid}
+              dbStates={dbStates}
+              events={events}
+              failureProtocols={failureProtocols}
+              addresses={allAddresses}
+              groupsByAddress={allGroupsByAddress}
+              leadingContent={(
+                <FilterControls
+                  filterType={filterType}
+                  setFilterType={setFilterType}
+                  filterServers={filterServers}
+                  setFilterServers={setFilterServers}
+                  filterSids={filterSids}
+                  setFilterSids={setFilterSids}
+                  typeOptions={typeOptions}
+                  allServers={allServers}
+                  allSids={allSids}
+                  serverDropdownOpen={serverDropdownOpen}
+                  setServerDropdownOpen={setServerDropdownOpen}
+                  sidDropdownOpen={sidDropdownOpen}
+                  setSidDropdownOpen={setSidDropdownOpen}
+                  compact
                 />
-              </div>
-            )}
+              )}
+            />
+
+            {/* TimePoint Slider + AP events - merged row */}
+            <div className="timepoint-slider-wrapper">
+              <TimePointSlider
+                globalStart={gStart}
+                globalEnd={gEnd}
+                currentTime={currentTimePoint}
+                setCurrentTime={setCurrentTimePoint}
+                allStateTimestamps={visibleDomainStateTimestamps}
+                onNext={handleNextState}
+                onPrev={handlePrevState}
+                hasDomainStates={visibleDomainStateTimestamps.length > 0}
+                processEvents={processEvents}
+                loadedServer={loadedServer}
+                focusedTimelineItem={focusedTimelineItem}
+                setFocusedTimelineItem={setFocusedTimelineItem}
+                setPanelFocus={setPanelFocus}
+                setSelectedAp={setSelectedAp}
+                setSelectedSid={setSelectedSid}
+                setSelectedDb={setSelectedDb}
+                setSelectedUnclassified={setSelectedUnclassified}
+                setHoveredBar={setHoveredBar}
+              />
+            </div>
             
             <DatabaseTimeline
               dbStates={dbStates}
@@ -1021,23 +1109,6 @@ function StackApp(): JSX.Element {
               setHoveredBar={setHoveredBar}
             />
             
-            <ApTimeline
-              processEvents={processEvents}
-              loadedServer={loadedServer}
-              gStart={gStart}
-              gEnd={gEnd}
-              cursorX={cursorX}
-              setCursorX={setCursorX}
-              focusedTimelineItem={focusedTimelineItem}
-              setFocusedTimelineItem={setFocusedTimelineItem}
-              setPanelFocus={setPanelFocus}
-              setSelectedAp={setSelectedAp}
-              setSelectedSid={setSelectedSid}
-              setSelectedDb={setSelectedDb}
-              setSelectedUnclassified={setSelectedUnclassified}
-              setHoveredBar={setHoveredBar}
-            />
-            
             <UnclassifiedEventsRow
               unclassifiedEvents={unclassifiedEvents}
               gStart={gStart}
@@ -1049,22 +1120,6 @@ function StackApp(): JSX.Element {
               setPanelFocus={setPanelFocus}
               setFocusedTimelineItem={setFocusedTimelineItem}
               setHoveredBar={setHoveredBar}
-            />
-            
-            <FilterBar
-              filterType={filterType}
-              setFilterType={setFilterType}
-              filterServers={filterServers}
-              setFilterServers={setFilterServers}
-              filterSids={filterSids}
-              setFilterSids={setFilterSids}
-              typeOptions={typeOptions}
-              allServers={allServers}
-              allSids={allSids}
-              serverDropdownOpen={serverDropdownOpen}
-              setServerDropdownOpen={setServerDropdownOpen}
-              sidDropdownOpen={sidDropdownOpen}
-              setSidDropdownOpen={setSidDropdownOpen}
             />
             
             <ProcessTimeline
@@ -1090,26 +1145,77 @@ function StackApp(): JSX.Element {
             />
 
             <Tooltip hoveredBar={hoveredBar} mousePos={mousePos} />
+          </div>
+        </div>
+        
+        {/* Resize handle */}
+        {domainPanelOpen && (
+          <div 
+            className="panel-resize-handle"
+            onMouseDown={() => setIsResizing(true)}
+          />
+        )}
+        
+        {/* Domain State Panel - collapsible on the right, always visible */}
+        <div style={{ width: domainPanelOpen ? `${domainPanelWidth}px` : 'auto' }}>
+          <DomainStatePanel
+            currentSnapshot={currentDomainStateSnapshot}
+            previousSnapshot={previousDomainStateSnapshot}
+            currentFrame={currentDomainStateFrame}
+            totalFrames={visibleDomainStates.length}
+            onNext={handleNextState}
+            onPrev={handlePrevState}
+            hasNext={visibleDomainStates.some(ds => ds.timestamp > (currentTimePoint || 0))}
+            hasPrev={visibleDomainStates.some(ds => ds.timestamp < (currentTimePoint || Infinity))}
+            isOpen={domainPanelOpen}
+            onClose={() => setDomainPanelOpen(false)}
+          />
+        </div>
+      </div>
 
-            <RangeSlider
-              globalStart={globalStart}
-              globalEnd={globalEnd}
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              setRangeStart={setRangeStart}
-              setRangeEnd={setRangeEnd}
-              dragging={dragging}
-              setDragging={setDragging}
-              setDragStartX={setDragStartX}
-              setDragStartRange={setDragStartRange}
-              allRowsBySid={allRowsBySid}
-              dbStates={dbStates}
-              events={events}
-              addresses={allAddresses}
-              groupsByAddress={allGroupsByAddress}
-            />
+      {/* Resize handle between timeline row and log panel */}
+      {(selectedSid !== null || selectedDb !== null || selectedAp !== null || selectedUnclassified) && (
+        <div 
+          style={{
+            height: '4px',
+            cursor: 'row-resize',
+            background: 'transparent',
+            position: 'relative',
+            flexShrink: 0,
+            transition: 'background 0.2s',
+            userSelect: 'none',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'var(--accent)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
+          }}
+          onMouseDown={() => setIsResizingTimeline(true)}
+        >
+          <div style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: '-4px',
+            bottom: '-4px',
+          }} />
+        </div>
+      )}
 
-            <LogPanel
+      {/* Log Panel - spans full width */}
+      <div style={{
+        flex: (selectedSid !== null || selectedDb !== null || selectedAp !== null || selectedUnclassified) 
+          ? 1 
+          : 0,
+        minHeight: (selectedSid !== null || selectedDb !== null || selectedAp !== null || selectedUnclassified) 
+          ? '200px' 
+          : 0,
+        overflow: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+      }}>
+        <LogPanel
               selectedSid={selectedSid}
               selectedDb={selectedDb}
               selectedAp={selectedAp}
@@ -1132,39 +1238,18 @@ function StackApp(): JSX.Element {
               loadedServer={loadedServer}
               rangeStart={rangeStart}
               rangeEnd={rangeEnd}
-            />
-          </div>
-        </div>
-        
-        {/* Resize handle */}
-        {domainPanelOpen && (
-          <div 
-            className="panel-resize-handle"
-            onMouseDown={() => setIsResizing(true)}
-          />
-        )}
-        
-        {/* Domain State Panel - collapsible on the right, always visible */}
-        <div style={{ width: domainPanelOpen ? `${domainPanelWidth}px` : 'auto' }}>
-          <DomainStatePanel
-            currentSnapshot={currentDomainStateSnapshot}
-            previousSnapshot={previousDomainStateSnapshot}
-            onNext={handleNextState}
-            onPrev={handlePrevState}
-            hasNext={domainStates.some(ds => ds.timestamp > (currentTimePoint || 0))}
-            hasPrev={domainStates.some(ds => ds.timestamp < (currentTimePoint || Infinity))}
-            isOpen={domainPanelOpen}
-            onClose={() => setDomainPanelOpen(false)}
-          />
-        </div>
+              logLevelFilter={logLevelFilter}
+          setLogLevelFilter={setLogLevelFilter}
+        />
       </div>
-      )}
-
-      {/* File Viewer - shown when mainViewMode is 'files' */}
+      </div>
+      )}      {/* File Viewer - shown when mainViewMode is 'files' */}
       {mainViewMode === 'files' && (
         <div className="file-viewer" style={{
           display: 'flex',
-          height: 'calc(100vh - 200px)',
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden',
           background: 'var(--bg-primary)',
         }}>
           {/* File List Sidebar */}
@@ -1173,10 +1258,13 @@ function StackApp(): JSX.Element {
             borderRight: '1px solid var(--border-primary)',
             overflow: 'auto',
             background: 'var(--bg-secondary)',
+            display: 'flex',
+            flexDirection: 'column',
           }}>
             <div style={{
               padding: '12px 16px',
               borderBottom: '1px solid var(--border-primary)',
+              flexShrink: 0,
             }}>
               <div style={{
                 fontWeight: 600,
@@ -1256,7 +1344,7 @@ function StackApp(): JSX.Element {
                 </div>
               )}
             </div>
-            <div>
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               {availableFiles.length === 0 ? (
                 <div style={{
                   padding: 16,
@@ -1329,19 +1417,18 @@ function StackApp(): JSX.Element {
           {/* File Content Viewer */}
           <div style={{
             flex: 1,
-            overflow: 'auto',
-            padding: 20,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
             background: 'var(--bg-primary)',
           }}>
             {selectedFile ? (
-              <div>
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                 <div style={{
-                  position: 'sticky',
-                  top: 0,
+                  flexShrink: 0,
                   background: 'var(--bg-primary)',
                   zIndex: 10,
-                  marginBottom: 16,
-                  paddingBottom: 12,
+                  padding: 20,
                   borderBottom: '1px solid var(--border-primary)',
                 }}>
                   <div style={{
@@ -1466,16 +1553,17 @@ function StackApp(): JSX.Element {
                     </div>
                   </div>
                 </div>
-                {fileContentSearch && contentMatches.length > 0 ? (
-                  <pre style={{
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    color: 'var(--text-primary)',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all',
-                    margin: 0,
-                  }}>
+                <div style={{ flex: 1, overflow: 'auto', padding: '0 20px 20px 20px', minHeight: 0 }}>
+                  {fileContentSearch && contentMatches.length > 0 ? (
+                    <pre style={{
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                      color: 'var(--text-primary)',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                      margin: 0,
+                    }}>
                     {(() => {
                       const parts: JSX.Element[] = [];
                       let lastIndex = 0;
@@ -1539,6 +1627,7 @@ function StackApp(): JSX.Element {
                     {fileContent}
                   </pre>
                 )}
+                </div>
               </div>
             ) : (
               <div style={{

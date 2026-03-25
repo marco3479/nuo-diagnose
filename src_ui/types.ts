@@ -63,7 +63,7 @@ export type TableRow =
   | { type: 'db'; key: string }
   | { type: 'instance'; key: string; instance: Instance };
 
-export type LoadMode = 'file' | 'nuosupport';
+export type LoadMode = 'collection' | 'tickets';
 
 export type Theme = 'dark' | 'light';
 

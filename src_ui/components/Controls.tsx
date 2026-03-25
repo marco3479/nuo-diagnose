@@ -1,6 +1,9 @@
+import type { JSX } from 'react';
 import type { LoadMode } from '../types';
+import NuoDBIcon from './NuoDBIcon';
 
 declare const window: any;
+declare const document: any;
 
 type ControlsProps = {
   loadMode: LoadMode;
@@ -15,13 +18,15 @@ type ControlsProps = {
   selectedPackage: string;
   setSelectedPackage: (pkg: string) => void;
   diagnosePackages: string[];
+  collectionItems: string[];
+  selectedCollection: string;
+  setSelectedCollection: (item: string) => void;
   theme: 'dark' | 'light';
   setTheme: (theme: 'dark' | 'light') => void;
   domainStatePanelOpen: boolean;
   setDomainStatePanelOpen: (open: boolean) => void;
   mainViewMode: 'timeline' | 'files';
   setMainViewMode: (mode: 'timeline' | 'files') => void;
-  loadMode: LoadMode;
   selectedServer: string;
   onFilesViewClick: () => void;
 };
@@ -39,6 +44,9 @@ export function Controls({
   selectedPackage,
   setSelectedPackage,
   diagnosePackages,
+  collectionItems,
+  selectedCollection,
+  setSelectedCollection,
   theme,
   setTheme,
   domainStatePanelOpen,
@@ -56,33 +64,66 @@ export function Controls({
           gap: 12,
           alignItems: 'center',
           flexWrap: 'wrap',
-          marginBottom: 8,
           width: '100%',
         }}
       >
+        <NuoDBIcon />
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           Load from:
           <select
             value={loadMode}
             onChange={(e: any) => setLoadMode(e.target.value)}
           >
-            <option value="nuosupport">nuosupport</option>
-            <option value="file">file path</option>
+            <option value="tickets">tickets</option>
+            <option value="collection" disabled>collection</option>
           </select>
         </label>
 
-        {loadMode === 'file' ? (
+        {loadMode === 'collection' ? (
           <>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              Log path:
-              <input
-                type="text"
-                value={path}
-                onChange={(e: any) => setPath(e.target.value)}
-                style={{ width: 360 }}
-              />
+              Collection:
+              <select
+                value={selectedCollection}
+                onChange={(e: any) => setSelectedCollection(e.target.value)}
+                style={{ minWidth: 200 }}
+              >
+                <option value="">Select item...</option>
+                {collectionItems.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
             </label>
-            <button onClick={onLoad} disabled={loading}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input
+                type="file"
+                style={{ display: 'none' }}
+                id="file-upload"
+                onChange={(e: any) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    // TODO: Upload file logic
+                    console.log('Upload file:', file.name);
+                  }
+                }}
+              />
+              <button
+                onClick={() => document.getElementById('file-upload')?.click()}
+                style={{
+                  padding: '6px 12px',
+                  background: 'var(--button-bg)',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                Upload File/Dir
+              </button>
+            </label>
+            <button onClick={onLoad} disabled={loading || !selectedCollection}>
               Load
             </button>
           </>
@@ -117,11 +158,16 @@ export function Controls({
                 <option value="">Select package...</option>
                 {diagnosePackages.map((p) => (
                   <option key={p} value={p}>
-                    {p}
+                    {p === '__standalone__' ? 'nuoadmin.log (standalone)' : p}
                   </option>
                 ))}
               </select>
             </label>
+            {selectedTicket && diagnosePackages.length === 0 && !loading && (
+              <span style={{ color: 'var(--text-muted)', fontSize: 13, fontStyle: 'italic' }}>
+                Diagnostic logs were not found
+              </span>
+            )}
             {loading && (
               <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
                 Loading...
@@ -179,19 +225,19 @@ export function Controls({
             <button
               onClick={() => {
                 setMainViewMode('files');
-                if (loadMode === 'nuosupport' && selectedServer) {
+                if (loadMode === 'tickets' && selectedServer) {
                   onFilesViewClick();
                 }
               }}
-              disabled={loadMode !== 'nuosupport' || !selectedServer}
+              disabled={loadMode !== 'tickets' || !selectedServer}
               style={{
                 background: mainViewMode === 'files' ? 'var(--button-bg)' : 'transparent',
                 color: mainViewMode === 'files' ? 'var(--text-primary)' : 'var(--text-muted)',
                 border: 'none',
                 padding: '6px 12px',
                 borderRadius: 3,
-                cursor: loadMode !== 'nuosupport' || !selectedServer ? 'not-allowed' : 'pointer',
-                opacity: loadMode !== 'nuosupport' || !selectedServer ? 0.5 : 1,
+                cursor: loadMode !== 'tickets' || !selectedServer ? 'not-allowed' : 'pointer',
+                opacity: loadMode !== 'tickets' || !selectedServer ? 0.5 : 1,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',

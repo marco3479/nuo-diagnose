@@ -35,9 +35,14 @@ export function ApTimeline({
 }: ApTimelineProps) {
   // Filter AP events (no sid)
   const apEvents = processEvents.filter(ev => ev.sid === null);
+  
+  // If no AP events at all, hide the panel
+  if (apEvents.length === 0) return null;
+  
   const apEventsInRange = apEvents.filter(ev => ev.ts >= gStart && ev.ts <= gEnd);
-
-  if (apEventsInRange.length === 0) return null;
+  
+  // Also hide if no events are in the current range and loadedServer is not set
+  if (apEventsInRange.length === 0 && !loadedServer) return null;
 
   return (
     <div
@@ -83,13 +88,36 @@ export function ApTimeline({
           setSelectedUnclassified(false);
         }}
       >
-        <div className="stack-label" style={{ fontWeight: 600 }}>
+        <div 
+          className="stack-label" 
+          style={{ 
+            fontWeight: 600,
+            width: 190,
+            fontSize: 12,
+            textAlign: 'right',
+            paddingRight: 8,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          onMouseEnter={() => {
+            const fullName = `AP - ${loadedServer || ''}`;
+            setHoveredBar({
+              type: 'process',
+              id: 'ap-label',
+              content: fullName,
+            });
+          }}
+          onMouseLeave={() => setHoveredBar(null)}
+        >
           AP - {loadedServer ? `${loadedServer}` : ''}
         </div>
         <div className="stack-track" style={{ position: 'relative' }}>
           {/* AP event markers */}
           {apEventsInRange.map((ev, idx) => {
             const pct = ((ev.ts - gStart) / (gEnd - gStart)) * 100;
+            // Compose raw log line: [timestamp] message (like log panel)
+            const logLine = `[${ev.iso || new Date(ev.ts).toISOString()}] ${ev.raw || ev.message}`;
             return (
               <div
                 key={`ap-event-${idx}`}
@@ -115,7 +143,7 @@ export function ApTimeline({
                   setSelectedUnclassified(false);
                 }}
                 onMouseEnter={() =>
-                  setHoveredBar({ type: 'process', id: `ap-${idx}`, content: ev.message || ev.raw || '' })
+                  setHoveredBar({ type: 'process', id: `ap-${idx}`, content: logLine })
                 }
                 onMouseLeave={() => setHoveredBar(null)}
               />

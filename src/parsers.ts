@@ -140,7 +140,7 @@ function extractTypeAndAddress(message: string, raw: string) {
 /**
  * Capture database state transitions from message
  */
-function captureDatabaseState(message: string, raw: string, ts: number, iso: string): boolean {
+function captureDatabaseState(message: string, raw: string, ts: number, iso: string, fileSource?: string): boolean {
 	// Prefer the "to" (target) state
 	const primary = message.match(
 		/Updated database from DatabaseInfo\{name=([^,}]+)[\s\S]*?to DatabaseInfo\{[^}]*state=([A-Za-z_]+)/i
@@ -149,7 +149,7 @@ function captureDatabaseState(message: string, raw: string, ts: number, iso: str
 		const dbName = primary[1] || 'unknown';
 		const state = (primary[2] || '').toUpperCase();
 		if (state) {
-			dbStateEvents.push({ dbName, ts, iso, state, message, raw });
+			dbStateEvents.push({ dbName, ts, iso, state, message, raw, fileSource });
 			return true;
 		}
 	}
@@ -165,7 +165,7 @@ function captureDatabaseState(message: string, raw: string, ts: number, iso: str
 			const nameAny = nameTo || message.match(/\bname=([^,}\s]+)/i) || message.match(/Updated database\s+([^\s,]+)/i);
 			const dbName = nameAny && nameAny[1] ? nameAny[1] : 'unknown';
 			if (state) {
-				dbStateEvents.push({ dbName, ts, iso, state, message, raw });
+				dbStateEvents.push({ dbName, ts, iso, state, message, raw, fileSource });
 				return true;
 			}
 		}
@@ -252,7 +252,7 @@ export function parseDomainLines(text: string, fileSource?: string): LogEvent[] 
 					events.push(evt);
 
 					// Capture database state transitions
-					captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso);
+					captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso, fileSource);
 
 					// Track sid occurrences and metadata
 					if (sid !== null) {
@@ -309,7 +309,7 @@ export function parseDomainLines(text: string, fileSource?: string): LogEvent[] 
 				events.push(evt);
 
 				// Capture database state transitions
-				captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso);
+				captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso, fileSource);
 
 				// Track sid occurrences and metadata
 				if (sid !== null) {
@@ -357,7 +357,7 @@ export function parseDomainLines(text: string, fileSource?: string): LogEvent[] 
 			events.push(evt);
 
 			// Capture database state transitions
-			captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso);
+			captureDatabaseState(currentEntry.message, currentEntry.raw, ts, currentEntry.iso, fileSource);
 
 			// Track sid occurrences and metadata
 			if (sid !== null) {

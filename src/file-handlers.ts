@@ -63,6 +63,8 @@ export async function handleListDiagnosePackages(request: any): Promise<Response
 		const entries = await fs.readdir(ticketPath);
 
 		const packages: string[] = [];
+		let hasStandaloneLog = false;
+		
 		for (const entry of entries) {
 			if (entry.startsWith('diagnose-')) {
 				try {
@@ -74,11 +76,32 @@ export async function handleListDiagnosePackages(request: any): Promise<Response
 				} catch (e) {
 					// Skip entries that can't be stat'd
 				}
+			} else if (entry === 'nuoadmin.log') {
+				// Check if there's a standalone nuoadmin.log file
+				try {
+					const fullPath = path.join(ticketPath, entry);
+					const stat = await fs.stat(fullPath);
+					if (stat.isFile()) {
+						hasStandaloneLog = true;
+					}
+				} catch (e) {
+					// Skip if can't be stat'd
+				}
 			}
 		}
 
 		packages.sort().reverse(); // newest first
-		return new Response(JSON.stringify({ packages }), { headers: { 'Content-Type': 'application/json' } });
+		
+		// If there are no packages and no standalone log, return empty
+		if (packages.length === 0 && !hasStandaloneLog) {
+			return new Response(JSON.stringify({ packages: [], hasStandaloneLog: false, isEmpty: true }), { 
+				headers: { 'Content-Type': 'application/json' } 
+			});
+		}
+		
+		return new Response(JSON.stringify({ packages, hasStandaloneLog }), { 
+			headers: { 'Content-Type': 'application/json' } 
+		});
 	} catch (err) {
 		const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
 		return new Response(JSON.stringify({ error: msg }), {
@@ -403,13 +426,45 @@ export async function handleFileContent(request: any): Promise<Response> {
 	}
 
 	const path = await import('path');
+	const fs = await import('fs/promises');
+	
+	// Handle standalone log case
+	if (pkg === '__standalone__') {
+		const ticketPath = `${DASSAULT_PATH}/${ticket}`;
+		const filePath = path.join(ticketPath, file);
+		
+		console.log(`[file-content] Reading standalone file: ${filePath}`);
+		
+		try {
+			const realTicketPath = await fs.realpath(ticketPath);
+			const realFilePath = await fs.realpath(filePath).catch(() => null);
+			
+			if (!realFilePath || !realFilePath.startsWith(realTicketPath)) {
+				console.error(`[file-content] Security violation: ${realFilePath} not under ${realTicketPath}`);
+				return new Response('Forbidden', { status: 403 });
+			}
+			
+			const content = await fs.readFile(filePath, 'utf-8');
+			console.log(`[file-content] Successfully read ${content.length} bytes`);
+			return new Response(content, {
+				headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+			});
+		} catch (err) {
+			const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+			console.error(`[file-content] Error:`, err);
+			return new Response(JSON.stringify({ error: msg }), {
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+	}
+	
 	const serverPath = `${DASSAULT_PATH}/${ticket}/${pkg}/admin/${server}`;
 	const filePath = path.join(serverPath, file);
 	
 	console.log(`[file-content] Reading file: ${filePath}`);
 	
 	// Security check: ensure the resolved path is within the server directory
-	const fs = await import('fs/promises');
 	try {
 		const realServerPath = await fs.realpath(serverPath);
 		const realFilePath = await fs.realpath(filePath).catch(() => null);
@@ -448,6 +503,32 @@ export async function handleListFiles(request: any): Promise<Response> {
 			status: 400,
 			headers: { 'Content-Type': 'application/json' },
 		});
+	}
+
+	// Handle standalone log case
+	if (pkg === '__standalone__') {
+		const ticketPath = `${DASSAULT_PATH}/${ticket}`;
+		try {
+			const fs = await import('fs/promises');
+			// Only return nuoadmin.log for standalone case
+			const logPath = `${ticketPath}/nuoadmin.log`;
+			try {
+				await fs.stat(logPath);
+				return new Response(JSON.stringify({ files: ['nuoadmin.log'] }), {
+					headers: { 'Content-Type': 'application/json' },
+				});
+			} catch (e) {
+				return new Response(JSON.stringify({ files: [] }), {
+					headers: { 'Content-Type': 'application/json' },
+				});
+			}
+		} catch (err) {
+			const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+			return new Response(JSON.stringify({ error: msg }), {
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
 	}
 
 	const serverPath = `${DASSAULT_PATH}/${ticket}/${pkg}/admin/${server}`;

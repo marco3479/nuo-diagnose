@@ -94,8 +94,90 @@ export async function handleLoadDiagnose(request: any): Promise<Response> {
 	const pkg = url.searchParams.get('package');
 	const server = url.searchParams.get('server');
 
-	if (!ticket || !pkg || !server) {
-		return new Response(JSON.stringify({ error: 'Missing ticket, package, or server parameter' }), {
+	if (!ticket || !pkg) {
+		return new Response(JSON.stringify({ error: 'Missing ticket or package parameter' }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+
+	// Handle standalone nuoadmin.log file
+	if (pkg === '__standalone__') {
+		const standalonePath = `/support/tickets/dassault/${ticket}/nuoadmin.log`;
+		
+		try {
+			const file = Bun.file(standalonePath);
+			const text = await file.text();
+
+			// Reset state
+			resetParserState();
+
+			// Parse events
+			const events = parseDomainLines(text, 'nuoadmin.log');
+			const frpEvents = parseFailureProtocolLines(text);
+			const byProcess = buildByProcess(events);
+
+			// Build instances
+			const instances = buildInstances(events);
+
+			// Build database states
+			const dbStates = buildDbStates(events);
+
+			// Build failure protocol events
+			const failureProtocols = frpEvents.map((e) => ({
+				dbName: e.dbName,
+				sid: e.sid,
+				node: e.node,
+				iteration: e.iteration,
+				ts: e.ts,
+				iso: e.iso,
+				message: e.message,
+				raw: e.raw,
+			}));
+
+			const first = events[0];
+			const last = events[events.length - 1];
+
+			// Build inferred domain states
+			const inferredDomainStates = buildInferredDomainStates(
+				events,
+				instances,
+				first?.ts ?? 0,
+				last?.ts ?? Date.now()
+			);
+
+			return new Response(
+				JSON.stringify(
+					{
+						events,
+						byProcess,
+						instances,
+						dbStates,
+						failureProtocols,
+						inferredDomainStates,
+						range: { start: first?.ts ?? null, end: last?.ts ?? null },
+						server: 'standalone',
+						multiFile: false,
+					},
+					null,
+					2
+				),
+				{
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		} catch (err) {
+			const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+			return new Response(JSON.stringify({ error: msg }), {
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+	}
+
+	// Handle diagnose package (original logic)
+	if (!server) {
+		return new Response(JSON.stringify({ error: 'Missing server parameter' }), {
 			status: 400,
 			headers: { 'Content-Type': 'application/json' },
 		});

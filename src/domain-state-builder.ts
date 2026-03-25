@@ -15,6 +15,41 @@ export type Instance = {
 	address?: string;
 };
 
+function inferProcessType(inst: Instance, events: LogEvent[]): 'TE' | 'SM' | null {
+	if (inst.type === 'TE' || inst.type === 'SM') {
+		return inst.type;
+	}
+
+	const relatedEvent = events.find((event) => {
+		if (event.sid !== inst.sid) return false;
+		return /\btype=(TE|SM)\b/.test(event.message || '') || /\btype=(TE|SM)\b/.test(event.raw || '');
+	});
+
+	const typeMatch = relatedEvent?.message?.match(/\btype=(TE|SM)\b/) || relatedEvent?.raw?.match(/\btype=(TE|SM)\b/);
+	if (typeMatch?.[1] === 'TE' || typeMatch?.[1] === 'SM') {
+		return typeMatch[1];
+	}
+
+	return null;
+}
+
+function inferDatabaseName(inst: Instance, events: LogEvent[]): string | null {
+	const processMatch = inst.process.match(/\(([^,]+)/);
+	if (processMatch?.[1]) {
+		return processMatch[1];
+	}
+
+	const relatedEvent = events.find((event) => {
+		if (event.sid !== inst.sid) return false;
+		const text = `${event.message || ''}\n${event.raw || ''}`;
+		return /\b(?:dbName|db|database)=([^,\s}]+)/.test(text);
+	});
+
+	const dbMatch = relatedEvent?.message?.match(/\b(?:dbName|db|database)=([^,\s}]+)/)
+		|| relatedEvent?.raw?.match(/\b(?:dbName|db|database)=([^,\s}]+)/);
+	return dbMatch?.[1] || null;
+}
+
 /**
  * Build inferred domain states from events and process instances
  */
@@ -31,8 +66,8 @@ export function buildInferredDomainStates(
 	for (const event of events) {
 		if (/RemoveNodeCommand|ShutdownNodesCommand|ShutdownNodeCommand/i.test(event.message || '')) {
 			const sidMatch = event.message?.match(/startId[:\s=]+(\d+)/i);
-			if (sidMatch) {
-				const sid = parseInt(sidMatch[1]);
+			if (sidMatch?.[1]) {
+				const sid = parseInt(sidMatch[1], 10);
 				removedSids.set(sid, event.ts);
 			}
 		}
@@ -94,8 +129,8 @@ function buildStateAtTimestamp(
 		if (event.ts <= timestamp && /RemoveNodeCommand|ShutdownNodesCommand|ShutdownNodeCommand/i.test(event.message || '')) {
 			// Extract sid from the event message
 			const sidMatch = event.message?.match(/startId[:\s=]+(\d+)/i);
-			if (sidMatch) {
-				const sid = parseInt(sidMatch[1]);
+			if (sidMatch?.[1]) {
+				const sid = parseInt(sidMatch[1], 10);
 				removedSids.add(sid);
 			}
 		}
@@ -126,6 +161,12 @@ function buildStateAtTimestamp(
 	const dbMap = new Map<string, DomainProcess[]>();
 	
 	for (const inst of activeInstances) {
+		const processType = inferProcessType(inst, events);
+		const dbName = inferDatabaseName(inst, events);
+		if (!processType || !dbName) {
+			continue;
+		}
+
 		const serverId = inst.address || 'unknown';
 		
 		// Track servers
@@ -133,16 +174,8 @@ function buildStateAtTimestamp(
 			serverMap.set(serverId, new Set());
 		}
 		
-		// Create process entry
-		const processType = inst.type === 'TE' || inst.type === 'SM' ? inst.type : 
-			(inst.process.includes('Engine') ? 'TE' : 'SM');
-		
-		// Extract database name from process string (e.g., "Engine(conv,1)")
-		const dbMatch = inst.process.match(/\(([^,]+)/);
-		const dbName = dbMatch ? dbMatch[1] : 'unknown';
-		
 		const process: DomainProcess = {
-			type: processType as 'TE' | 'SM',
+			type: processType,
 			address: inst.address || 'unknown',
 			port: 48006, // Default port, would need to parse from events
 			startId: inst.sid,
@@ -158,6 +191,10 @@ function buildStateAtTimestamp(
 		}
 		dbMap.get(dbName)!.push(process);
 	}
+
+	if (dbMap.size === 0) {
+		return null;
+	}
 	
 	// Build servers list
 	const servers: DomainServer[] = Array.from(serverMap.keys()).map(serverId => ({
@@ -166,7 +203,7 @@ function buildStateAtTimestamp(
 		port: 48005,
 		lastAck: 0,
 		status: 'ACTIVE Connected',
-		role: 'UNKNOWN',
+		role: '',
 	}));
 	
 	// Get database states at this timestamp

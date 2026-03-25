@@ -1,7 +1,8 @@
+import type { JSX } from 'react';
 import type { ServerTimeRange, HoveredBar } from '../types';
 
 type ServerTimelineProps = {
-  loadMode: 'file' | 'nuosupport';
+  loadMode: 'collection' | 'tickets';
   selectedPackage: string;
   serverTimeRanges: ServerTimeRange[];
   selectedServer: string;
@@ -10,6 +11,7 @@ type ServerTimelineProps = {
   setApsCollapsed: (collapsed: boolean) => void;
   setHoveredBar: (bar: HoveredBar | null) => void;
   setMousePos: (pos: { x: number; y: number }) => void;
+  loadedServer: string;
 };
 
 export function ServerTimeline({
@@ -22,8 +24,9 @@ export function ServerTimeline({
   setApsCollapsed,
   setHoveredBar,
   setMousePos,
+  loadedServer,
 }: ServerTimelineProps): JSX.Element | null {
-  if (loadMode !== 'nuosupport' || !selectedPackage) {
+  if (loadMode !== 'tickets' || !selectedPackage) {
     return null;
   }
 
@@ -36,23 +39,22 @@ export function ServerTimeline({
   return (
     <div
       style={{
-        marginBottom: 12,
         background: 'var(--bg-secondary)',
         border: '1px solid var(--border-primary)',
         borderRadius: 6,
-        padding: 12,
+        padding: 8,
       }}
     >
       <div
         style={{
           fontSize: 13,
           fontWeight: 600,
-          marginBottom:
-            apsCollapsed && selectedServer ? 8 : apsCollapsed ? 0 : 8,
+          // marginBottom:
+          //   apsCollapsed && selectedServer ? 8 : apsCollapsed ? 0 : 8,
           color: 'var(--text-primary)',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
+          gap: 20,
           cursor: 'pointer',
           userSelect: 'none',
         }}
@@ -69,8 +71,6 @@ export function ServerTimeline({
           ▼
         </span>
         Logs from servers
-      </div>
-
       {apsCollapsed && selectedServer && (() => {
         const selectedRange = serverTimeRanges.find(
           (r) => r.server === selectedServer
@@ -81,25 +81,7 @@ export function ServerTimeline({
         const width = ((selectedRange.end - selectedRange.start) / timeSpan) * 100;
 
         return (
-          <div style={{ position: 'relative' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: 11,
-                color: 'var(--text-hint)',
-                marginBottom: 4,
-                paddingLeft: 200,
-                paddingRight: 8,
-              }}
-            >
-              <span>
-                {new Date(minTs).toISOString().replace('T', ' ').substring(0, 19)}
-              </span>
-              <span>
-                {new Date(maxTs).toISOString().replace('T', ' ').substring(0, 19)}
-              </span>
-            </div>
+          <div style={{ position: 'relative', flex: 1 }}>
             <div
               style={{
                 display: 'flex',
@@ -155,13 +137,15 @@ export function ServerTimeline({
           </div>
         );
       })()}
+      </div>
+
 
       {!apsCollapsed &&
-        (serverTimeRanges.length === 0 ? (
+        (serverTimeRanges.length === 0 && !loadedServer ? (
           <div style={{ color: 'var(--text-hint)', fontSize: 13, padding: 8 }}>
             Loading APs...
           </div>
-        ) : (
+        ) : serverTimeRanges.length === 0 && loadedServer ? null : (
           <div style={{ position: 'relative' }}>
             <div
               style={{

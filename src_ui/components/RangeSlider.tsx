@@ -1,3 +1,6 @@
+import React, { memo } from "react";
+import type { JSX, ReactNode } from "react";
+
 type RangeSliderProps = {
   globalStart: number;
   globalEnd: number;
@@ -12,9 +15,197 @@ type RangeSliderProps = {
   allRowsBySid: Record<string, any[]>;
   dbStates: Record<string, any[]>;
   events: any[];
+  failureProtocols: any[];
   addresses: string[];
   groupsByAddress: Record<string, string[]>;
+  leadingContent?: ReactNode;
 };
+
+// Memoized minimap component - only re-renders when data changes, not during dragging
+const MinimapContent = memo(({
+  globalStart,
+  globalEnd,
+  dbStates,
+  allRowsBySid,
+  events,
+  failureProtocols,
+  addresses,
+  groupsByAddress,
+  dbBarHeight,
+  dbBarSpacing,
+  processAreaStart,
+  processBarHeight,
+  processBarSpacing,
+}: {
+  globalStart: number;
+  globalEnd: number;
+  dbStates: Record<string, any[]>;
+  allRowsBySid: Record<string, any[]>;
+  events: any[];
+  failureProtocols: any[];
+  addresses: string[];
+  groupsByAddress: Record<string, string[]>;
+  dbBarHeight: number;
+  dbBarSpacing: number;
+  processAreaStart: number;
+  processBarHeight: number;
+  processBarSpacing: number;
+}) => {
+  return (
+    <>
+      {/* Database states minimap */}
+      {Object.keys(dbStates || {}).map((dbName, dbIdx) => {
+        const segments = dbStates[dbName] || [];
+        return segments.map((seg: any, segIdx: number) => {
+          const left =
+            ((seg.start - globalStart) / (globalEnd - globalStart)) * 100;
+          const width =
+            ((seg.end - seg.start) / (globalEnd - globalStart)) * 100;
+          return (
+            <div
+              key={`minimap-db-${dbName}-${segIdx}`}
+              style={{
+                position: 'absolute',
+                left: `${left}%`,
+                width: `${width}%`,
+                top: dbIdx * dbBarSpacing,
+                height: dbBarHeight,
+                background: 'hsla(200, 60%, 50%, 0.4)',
+              }}
+            />
+          );
+        });
+      })}
+      {/* Process instances minimap */}
+      {addresses.flatMap((addr, addrIdx) => {
+        const sids = groupsByAddress[addr] || [];
+        return sids.flatMap((sid, sidIdxInAddr) => {
+          const instances = allRowsBySid[sid] || [];
+          // Calculate the global index for vertical positioning
+          const sidsBefore = addresses.slice(0, addrIdx).reduce(
+            (count, a) => count + (groupsByAddress[a] || []).length,
+            0
+          );
+          const globalSidIdx = sidsBefore + sidIdxInAddr;
+          
+          return instances.map((inst, instIdx) => {
+            // Check if there are any RemoveNodeCommand events for this instance
+            const removeEvents = events.filter(
+              (e: any) =>
+                e.sid === inst.sid && /RemoveNodeCommand/.test(e.message ?? '')
+            );
+            // If no remove command, extend to globalEnd (like the main timeline)
+            const effectiveEnd = removeEvents.length > 0 ? inst.end : globalEnd;
+            
+            const left =
+              ((inst.start - globalStart) / (globalEnd - globalStart)) * 100;
+            const width =
+              ((effectiveEnd - inst.start) / (globalEnd - globalStart)) * 100;
+            return (
+              <div
+                key={`minimap-inst-${sid}-${instIdx}`}
+                style={{
+                  position: 'absolute',
+                  left: `${left}%`,
+                  width: `${Math.max(width, 0.5)}%`,
+                  top: processAreaStart + globalSidIdx * processBarSpacing,
+                  height: processBarHeight,
+                  background: 'hsla(42, 60%, 50%, 0.4)',
+                }}
+              />
+            );
+          });
+        });
+      })}
+      {/* ASSERT markers minimap */}
+      {addresses.flatMap((addr, addrIdx) => {
+        const sids = groupsByAddress[addr] || [];
+        return sids.flatMap((sid, sidIdxInAddr) => {
+          // Calculate the global index for vertical positioning
+          const sidsBefore = addresses.slice(0, addrIdx).reduce(
+            (count, a) => count + (groupsByAddress[a] || []).length,
+            0
+          );
+          const globalSidIdx = sidsBefore + sidIdxInAddr;
+          
+          // Find non-graceful RemoveNodeCommand events for this sid
+          const assertEvents = events.filter((e: any) => {
+            if (e.sid !== Number(sid)) return false;
+            if (!/RemoveNodeCommand/.test(e.message ?? '')) return false;
+            // Show markers for all non-graceful removals
+            const isGraceful = /Gracefully shutdown engine/i.test(e.message ?? '');
+            return !isGraceful;
+          });
+          
+          return assertEvents.map((assertEvent, idx) => {
+            const left =
+              ((assertEvent.ts - globalStart) / (globalEnd - globalStart)) * 100;
+            const reasonMatch = assertEvent.message?.match(
+              /reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/
+            );
+            const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+            return (
+              <div
+                key={`minimap-assert-${sid}-${idx}`}
+                style={{
+                  position: 'absolute',
+                  left: `${left}%`,
+                  width: 2,
+                  top: processAreaStart + globalSidIdx * processBarSpacing,
+                  height: processBarHeight,
+                  background: hasAssert ? 'hsla(0, 100%, 40%, 1)' : 'hsla(10, 90%, 50%, 0.9)',
+                  transform: 'rotate(45deg)',
+                  zIndex: 5,
+                  boxShadow: hasAssert
+                    ? '0 0 3px 1px rgba(255, 0, 0, 0.9), 0 0 6px 2px rgba(255, 0, 0, 0.5)'
+                    : '0 0 2px 1px rgba(255, 80, 80, 0.7), 0 0 4px 1px rgba(255, 100, 80, 0.5)',
+                }}
+              />
+            );
+          });
+        });
+      })}
+      {/* Failure Protocol markers minimap */}
+      {addresses.flatMap((addr, addrIdx) => {
+        const sids = groupsByAddress[addr] || [];
+        return sids.flatMap((sid, sidIdxInAddr) => {
+          // Calculate the global index for vertical positioning
+          const sidsBefore = addresses.slice(0, addrIdx).reduce(
+            (count, a) => count + (groupsByAddress[a] || []).length,
+            0
+          );
+          const globalSidIdx = sidsBefore + sidIdxInAddr;
+          
+          // Find failure protocol events for this sid
+          const frpEvents = failureProtocols.filter((frp: any) => frp.sid === Number(sid));
+          
+          return frpEvents.map((frpEvent, idx) => {
+            const left =
+              ((frpEvent.ts - globalStart) / (globalEnd - globalStart)) * 100;
+            return (
+              <div
+                key={`minimap-frp-${sid}-${idx}`}
+                style={{
+                  position: 'absolute',
+                  left: `${left}%`,
+                  width: 3,
+                  top: processAreaStart + globalSidIdx * processBarSpacing,
+                  height: 3,
+                  background: 'hsla(30, 100%, 50%, 1)',
+                  borderRadius: '50%',
+                  zIndex: 5,
+                  boxShadow: '0 0 3px 1px rgba(255, 136, 0, 0.9), 0 0 6px 2px rgba(255, 136, 0, 0.5)',
+                }}
+              />
+            );
+          });
+        });
+      })}
+    </>
+  );
+});
+
+MinimapContent.displayName = 'MinimapContent';
 
 export function RangeSlider({
   globalStart,
@@ -30,18 +221,55 @@ export function RangeSlider({
   allRowsBySid,
   dbStates,
   events,
+  failureProtocols,
   addresses,
   groupsByAddress,
+  leadingContent,
 }: RangeSliderProps): JSX.Element {
   const gStart = rangeStart ?? globalStart;
   const gEnd = rangeEnd ?? globalEnd;
 
+  // Calculate minimap dimensions
+  const minimapHeight = 60;
+  const dbCount = Object.keys(dbStates || {}).length;
+  const processCount = addresses.reduce(
+    (count, addr) => count + (groupsByAddress[addr] || []).length,
+    0
+  );
+  
+  // Reserve space: flexible allocation based on counts
+  const dbAreaHeight = dbCount > 0 ? Math.min(10, minimapHeight * 0.2) : 0;
+  const processAreaStart = dbAreaHeight;
+  const processAreaHeight = minimapHeight - processAreaStart;
+  
+  // Calculate bar heights and spacing to fit all items
+  // Allow decimals for thin bars, no minimum constraint
+  const dbBarHeight = dbCount > 0 ? dbAreaHeight / dbCount : 0;
+  const dbBarSpacing = dbBarHeight;
+  
+  const processBarHeight = processCount > 0 ? processAreaHeight / processCount : 0;
+  const processBarSpacing = processBarHeight;
+
   return (
-    <div style={{ display: 'flex', marginTop: 8, marginBottom: 12 }}>
-      <div style={{ width: 'var(--label-width)', flexShrink: 0 }} />
+    <div className="range-slider" style={{ display: 'flex', flexShrink: 0, minHeight: 0 }}>
+      <div
+        style={{
+          width: 'var(--label-width)',
+          flexShrink: 0,
+          minWidth: 0,
+          paddingRight: leadingContent ? 8 : 0,
+          display: 'flex',
+          alignItems: 'center',
+          overflow: leadingContent ? 'visible' : 'hidden',
+          position: 'relative',
+          zIndex: leadingContent ? 4 : 'auto',
+        }}
+      >
+        {leadingContent}
+      </div>
       <div
         className="range-slider-track"
-        style={{ flex: 1, position: 'relative', height: 80 }}
+        style={{ flex: 1, position: 'relative', minHeight: 65, height: 65, flexShrink: 0 }}
       >
         {/* Minimap background */}
         <div
@@ -54,115 +282,24 @@ export function RangeSlider({
             background: 'var(--bg-secondary)',
             borderRadius: 4,
             border: '1px solid var(--border-secondary)',
+            overflow: 'hidden',
           }}
         >
-          {/* Database states minimap */}
-          {Object.keys(dbStates || {}).map((dbName, dbIdx) => {
-            const segments = dbStates[dbName] || [];
-            return segments.map((seg: any, segIdx: number) => {
-              const left =
-                ((seg.start - globalStart) / (globalEnd - globalStart)) * 100;
-              const width =
-                ((seg.end - seg.start) / (globalEnd - globalStart)) * 100;
-              return (
-                <div
-                  key={`minimap-db-${dbName}-${segIdx}`}
-                  style={{
-                    position: 'absolute',
-                    left: `${left}%`,
-                    width: `${width}%`,
-                    top: dbIdx * 2,
-                    height: 2,
-                    background: 'hsla(200, 60%, 50%, 0.4)',
-                  }}
-                />
-              );
-            });
-          })}
-          {/* Process instances minimap */}
-          {addresses.flatMap((addr, addrIdx) => {
-            const sids = groupsByAddress[addr] || [];
-            return sids.flatMap((sid, sidIdxInAddr) => {
-              const instances = allRowsBySid[sid] || [];
-              // Calculate the global index for vertical positioning
-              const sidsBefore = addresses.slice(0, addrIdx).reduce(
-                (count, a) => count + (groupsByAddress[a] || []).length,
-                0
-              );
-              const globalSidIdx = sidsBefore + sidIdxInAddr;
-              
-              return instances.map((inst, instIdx) => {
-                // Check if there are any RemoveNodeCommand events for this instance
-                const removeEvents = events.filter(
-                  (e: any) =>
-                    e.sid === inst.sid && /RemoveNodeCommand/.test(e.message ?? '')
-                );
-                // If no remove command, extend to globalEnd (like the main timeline)
-                const effectiveEnd = removeEvents.length > 0 ? inst.end : globalEnd;
-                
-                const left =
-                  ((inst.start - globalStart) / (globalEnd - globalStart)) * 100;
-                const width =
-                  ((effectiveEnd - inst.start) / (globalEnd - globalStart)) * 100;
-                return (
-                  <div
-                    key={`minimap-inst-${sid}-${instIdx}`}
-                    style={{
-                      position: 'absolute',
-                      left: `${left}%`,
-                      width: `${Math.max(width, 0.5)}%`,
-                      top: 10 + globalSidIdx * 2,
-                      height: 2,
-                      background: 'hsla(42, 60%, 50%, 0.4)',
-                    }}
-                  />
-                );
-              });
-            });
-          })}
-          {/* ASSERT markers minimap */}
-          {addresses.flatMap((addr, addrIdx) => {
-            const sids = groupsByAddress[addr] || [];
-            return sids.flatMap((sid, sidIdxInAddr) => {
-              // Calculate the global index for vertical positioning
-              const sidsBefore = addresses.slice(0, addrIdx).reduce(
-                (count, a) => count + (groupsByAddress[a] || []).length,
-                0
-              );
-              const globalSidIdx = sidsBefore + sidIdxInAddr;
-              
-              // Find ASSERT events for this sid
-              const assertEvents = events.filter((e: any) => {
-                if (e.sid !== Number(sid)) return false;
-                if (!/RemoveNodeCommand/.test(e.message ?? '')) return false;
-                const reasonMatch = e.message?.match(
-                  /reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/
-                );
-                return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
-              });
-              
-              return assertEvents.map((assertEvent, idx) => {
-                const left =
-                  ((assertEvent.ts - globalStart) / (globalEnd - globalStart)) * 100;
-                return (
-                  <div
-                    key={`minimap-assert-${sid}-${idx}`}
-                    style={{
-                      position: 'absolute',
-                      left: `${left}%`,
-                      width: 2,
-                      top: 10 + globalSidIdx * 2,
-                      height: 2,
-                      background: 'hsla(0, 100%, 40%, 1)',
-                      transform: 'rotate(45deg)',
-                      zIndex: 5,
-                      boxShadow: '0 0 3px 1px rgba(255, 0, 0, 0.9), 0 0 6px 2px rgba(255, 0, 0, 0.5)',
-                    }}
-                  />
-                );
-              });
-            });
-          })}
+          <MinimapContent
+            globalStart={globalStart}
+            globalEnd={globalEnd}
+            dbStates={dbStates}
+            allRowsBySid={allRowsBySid}
+            events={events}
+            failureProtocols={failureProtocols}
+            addresses={addresses}
+            groupsByAddress={groupsByAddress}
+            dbBarHeight={dbBarHeight}
+            dbBarSpacing={dbBarSpacing}
+            processAreaStart={processAreaStart}
+            processBarHeight={processBarHeight}
+            processBarSpacing={processBarSpacing}
+          />
         </div>
         {/* Range selection overlay */}
         <div
@@ -234,20 +371,6 @@ export function RangeSlider({
             setDragging('end');
           }}
         />
-        {/* Time labels */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 62,
-            left: 0,
-            right: 0,
-            fontSize: 11,
-            color: 'var(--text-hint)',
-            textAlign: 'center',
-          }}
-        >
-          {new Date(gStart).toISOString()} → {new Date(gEnd).toISOString()}
-        </div>
       </div>
     </div>
   );

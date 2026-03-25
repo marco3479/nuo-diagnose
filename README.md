@@ -25,16 +25,16 @@ Quick start (development)
    bun install
    ```
 
-2. Start the server (serves static UI and `/events.json`):
+2. Start the development workflow (builds the UI in watch mode, restarts the server on backend changes, and auto-reloads the browser on bundle changes):
 
    ```bash
-   bun ./nuoadmin-diagnose.ts
+   bun run dev
    ```
 
    By default the server listens on `http://localhost:8080`. You can override the port with `PORT` environment variable, for example:
 
    ```bash
-   PORT=3002 bun ./nuoadmin-diagnose.ts
+   PORT=3002 bun run dev
    ```
 
 3. Open the UI in a browser:
@@ -66,7 +66,7 @@ Quick start (development)
    Notes about build output
 
    - After a successful `bun run build` you should see `public/app.js` (the bundled JS) and its sourcemap. The server serves `public/` directly so the UI will load the bundled file without remote ESM imports.
-   - If you edit `src_ui/app.tsx` frequently, use `bun run watch` during development for incremental rebuilds and React Fast Refresh.
+   - `bun run dev` now starts both the UI watcher and the server watcher, so editing `src_ui/`, `src/`, `nuoadmin-diagnose.ts`, or files in `public/` updates the running app without a manual `bun run build`.
 
 How parsing works
 
@@ -89,8 +89,10 @@ Rebuilding the UI (if you edit `src_ui/app.tsx`)
    ```json
    {
       "scripts": {
-         "build": "bun build src_ui/app.tsx --outdir public --sourcemap=linked --target browser --format esm",
-         "watch": "bun build src_ui/app.tsx --outdir public --watch --target browser --format esm --react-fast-refresh"
+         "dev": "bun ./scripts/dev.ts",
+         "dev:server": "DEV_MODE=1 bun --watch ./nuoadmin-diagnose.ts",
+         "dev:ui": "bun build src_ui/app.tsx --outdir public --watch --sourcemap=linked --target browser --format esm",
+         "build": "bun build src_ui/app.tsx --outdir public --sourcemap=linked --target browser --format esm"
       }
    }
    ```
@@ -101,10 +103,16 @@ Rebuilding the UI (if you edit `src_ui/app.tsx`)
    bun run build
    ```
 
-- Development incremental build with fast refresh:
+- Development incremental UI-only build:
 
    ```bash
    bun run watch
+   ```
+
+- Full development workflow with server restart + browser reload:
+
+   ```bash
+   bun run dev
    ```
 
 - After building, `public/` will contain the bundled `app.js` and assets which the server will serve.

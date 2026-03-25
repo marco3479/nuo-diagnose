@@ -53,7 +53,11 @@ export function ProcessTimeline({
   return (
     <div
       className="stack-area"
-      style={{ position: 'relative' }}
+      style={{
+        position: 'relative', 
+        // overflowX: 'hidden',
+        overflowY: 'scroll'
+      }}
       onMouseMove={(e: any) => {
         const rect = e.currentTarget.getBoundingClientRect();
         setCursorX(e.clientX - rect.left);
@@ -76,17 +80,17 @@ export function ProcessTimeline({
       )}
       {addresses.map((addr) => {
         const sids = groupsByAddress[addr] || [];
-        
+
         return (
           <div key={`group-${addr}`}>
             {/* AP row - just a label */}
             <div className="stack-row" style={{ opacity: 0.9, fontWeight: 600 }}>
-              <div className="stack-label" style={{ color: 'white', fontSize: 10 }}>
+                <div className="stack-label" style={{ fontSize: 10 }}>
                 {addr}
-              </div>
+                </div>
               <div className="stack-track" />
             </div>
-            
+
             {sids.map((sid, sidIndexInGroup) => {
               const procInst = (rowsBySid[sid] || []).sort((a, b) => a.start - b.start);
               if (procInst.length === 0) return null;
@@ -109,8 +113,8 @@ export function ProcessTimeline({
                 anyType === 'TE'
                   ? ((sidIndexInGroup * 3) % 40) - 7
                   : anyType === 'SM'
-                  ? ((sidIndexInGroup * 15) % 60) - 30
-                  : 0;
+                    ? ((sidIndexInGroup * 15) % 60) - 30
+                    : 0;
               if (!anyType || (anyType !== 'TE' && anyType !== 'SM')) {
                 baseHue = 270;
                 baseSat = 60;
@@ -163,6 +167,7 @@ export function ProcessTimeline({
                     setPanelFocus('timeline');
                     setSelectedSid(Number(sid));
                     setSelectedDb(null);
+                    setSelectedAp(null);
                     setSelectedUnclassified(false);
                   }}
                 >
@@ -225,9 +230,8 @@ export function ProcessTimeline({
                         background: `hsl(${hue}deg ${baseSat}% ${lit}%)`,
                       };
 
-                      let tooltipContent = `sid=${inst.sid} ${inst.firstIso ?? ''} → ${
-                        removeEvents.length > 0 ? inst.lastIso ?? '' : 'still running'
-                      }`;
+                      let tooltipContent = `sid=${inst.sid} ${inst.firstIso ?? ''} → ${removeEvents.length > 0 ? inst.lastIso ?? '' : 'still running'
+                        }`;
                       if (removeEvents.length > 0) {
                         tooltipContent += '\n\nRemoveNodeCommand events:\n';
                         removeEvents.forEach((re) => {
@@ -286,32 +290,38 @@ export function ProcessTimeline({
                       .filter((e: any) => {
                         if (e.sid !== Number(sid)) return false;
                         if (!/RemoveNodeCommand/.test(e.message ?? '')) return false;
-                        const reasonMatch = e.message?.match(
+                        // Show markers for all non-graceful removals
+                        const isGraceful = /Gracefully shutdown engine/i.test(e.message ?? '');
+                        return !isGraceful;
+                      })
+                      .map((removeEvent, idx) => {
+                        const left = ((removeEvent.ts - gStart) / (gEnd - gStart)) * 100;
+                        const reasonMatch = removeEvent.message?.match(
                           /reason=([^,]+(?:,\s*[^=]+?(?=,\s*\w+=|$))*)/
                         );
-                        return reasonMatch && /ASSERT/i.test(reasonMatch[0]);
-                      })
-                      .map((assertEvent, idx) => {
-                        const left = ((assertEvent.ts - gStart) / (gEnd - gStart)) * 100;
-                        const tooltipContent = `ASSERT detected\n${assertEvent.iso}\n${assertEvent.message}`;
+                        const hasAssert = reasonMatch && /ASSERT/i.test(reasonMatch[0]);
+                        const tooltipContent = hasAssert
+                          ? `ASSERT detected\n${removeEvent.iso}\n${removeEvent.message}`
+                          : `Non-graceful removal\n${removeEvent.iso}\n${removeEvent.message}`;
                         const assertId = `assert-${sid}-${idx}`;
                         return (
                           <div
                             key={assertId}
                             className="assert-dot"
-                            style={
-                              {
-                                left: `${left}%`,
-                                position: 'absolute',
-                                top: '2px',
-                                width: 8,
-                                height: 8,
-                                background: 'hsla(0, 100%, 40%, 1)',
-                                transform: 'rotate(45deg)',
-                                zIndex: 11,
-                                anchorName: `--${assertId}`,
-                                boxShadow: '0 0 8px 2px rgba(255, 0, 0, 0.8), 0 0 4px 1px rgba(255, 50, 50, 0.9), 0 0 12px 3px rgba(255, 0, 0, 0.4)',
-                              } as any
+                            style={{
+                              left: `${left}%`,
+                              position: 'absolute',
+                              top: '2px',
+                              width: 8,
+                              height: 8,
+                              background: hasAssert ? 'hsla(0, 100%, 40%, 1)' : 'hsla(10, 90%, 50%, 0.9)',
+                              transform: 'rotate(45deg)',
+                              zIndex: 11,
+                              anchorName: `--${assertId}`,
+                              boxShadow: hasAssert
+                                ? '0 0 8px 2px rgba(255, 0, 0, 0.8), 0 0 4px 1px rgba(255, 50, 50, 0.9), 0 0 12px 3px rgba(255, 0, 0, 0.4)'
+                                : '0 0 6px 1px rgba(255, 80, 80, 0.6), 0 0 3px 1px rgba(255, 100, 80, 0.8)',
+                            } as any
                             }
                             onMouseEnter={() =>
                               setHoveredBar({ type: 'assert', id: assertId, content: tooltipContent })
@@ -325,8 +335,9 @@ export function ProcessTimeline({
               );
             })}
           </div>
-        );
-      })}
+        )
+      })
+      }
     </div>
   );
 }

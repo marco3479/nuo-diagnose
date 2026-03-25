@@ -61,10 +61,10 @@ export function useDropdownOutsideClick(
   }, [serverDropdownOpen, sidDropdownOpen, setServerDropdownOpen, setSidDropdownOpen]);
 }
 
-export function useUrlNavigation(loadMode: 'file' | 'nuosupport') {
+export function useUrlNavigation(loadMode: 'collection' | 'tickets') {
   useEffect(() => {
-    if (loadMode === 'nuosupport' && window.location.pathname === '/') {
-      window.history.replaceState({}, '', '/nuosupport');
+    if (loadMode === 'tickets' && window.location.pathname === '/') {
+      window.history.replaceState({}, '', '/tickets');
     }
   }, [loadMode]);
 }
@@ -173,12 +173,36 @@ export function useZdTickets() {
   return zdTickets;
 }
 
+export async function loadCollectionItems(): Promise<string[]> {
+  try {
+    const res = await fetch('/list-collection');
+    const json = await res.json();
+    return json.items || [];
+  } catch (e) {
+    console.error('Failed to load collection items:', e);
+    return [];
+  }
+}
+
 export async function loadDiagnosePackages(ticket: string): Promise<string[]> {
   const res = await fetch(
     `/list-diagnose-packages?ticket=${encodeURIComponent(ticket)}`
   );
   const json = await res.json();
-  return json.packages || [];
+  
+  // Check if diagnostic logs were not found
+  if (json.isEmpty) {
+    return [];
+  }
+  
+  const packages = json.packages || [];
+  
+  // Add standalone log as a special package option if it exists
+  if (json.hasStandaloneLog) {
+    packages.push('__standalone__');
+  }
+  
+  return packages;
 }
 
 export async function loadServerTimeRanges(

@@ -5,9 +5,11 @@
   "type": "module",
   "main": "nuoadmin-diagnose.ts",
   "scripts": {
-    "dev": "bun ./nuoadmin-diagnose.ts",
+    "dev": "bun ./scripts/dev.ts",
+    "dev:server": "DEV_MODE=1 bun --watch ./nuoadmin-diagnose.ts",
+    "dev:ui": "bun build src_ui/app.tsx --outdir public --watch --sourcemap=linked --target browser --format esm",
     "build": "bun build src_ui/app.tsx --outdir public --sourcemap=linked --target browser --format esm",
-    "watch": "bun build src_ui/app.tsx --outdir public --watch --target browser --format esm",
+    "watch": "bun run dev:ui",
     "test": "bun test"
   },
   "engines": {

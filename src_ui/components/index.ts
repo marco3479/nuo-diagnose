@@ -1,12 +1,12 @@
 export { Controls } from './Controls';
 export { ServerTimeline } from './ServerTimeline';
-export { FilterBar } from './FilterBar';
+export { FilterBar, FilterControls } from './FilterBar';
 export { RangeSlider } from './RangeSlider';
 export { Tooltip, LoadingSpinner } from './Common';
 export { DatabaseTimeline } from './DatabaseTimeline';
-export { ApTimeline } from './ApTimeline';
 export { UnclassifiedEventsRow } from './UnclassifiedEventsRow';
 export { ProcessTimeline } from './ProcessTimeline';
 export { LogPanel } from './LogPanel';
 export { TimePointSlider } from './TimePointSlider';
 export { DomainStatePanel } from './DomainStatePanel';
+export { FileViewer } from './FileViewer';

@@ -18,6 +18,7 @@ export type DbStateEvent = {
 	state: string;
 	message: string;
 	raw: string;
+	fileSource?: string;
 };
 
 export type FailureProtocolEvent = {
@@ -64,6 +65,8 @@ export type DbStateSegment = {
 	end: number;
 	iso: string;
 	message: string;
+	raw?: string;
+	fileSource?: string;
 };
 
 export type ServerTimeRange = {

@@ -30,6 +30,8 @@ export function DatabaseTimeline({
   setSelectedSid,
   setHoveredBar,
 }: DatabaseTimelineProps) {
+  const rangeSpan = Math.max(1, gEnd - gStart);
+
   if (Object.keys(dbStates || {}).length === 0) {
     return (
       <div className="stack-area" style={{ marginBottom: 6 }}>
@@ -38,6 +40,59 @@ export function DatabaseTimeline({
           <div className="stack-track">
             <div className="hint" style={{ position: 'absolute', left: 0 }}>
               No database state transitions found in this log.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const visibleDbEntries = Object.entries(dbStates).flatMap(([db, segs]) => {
+    const visibleSegments = segs.filter((seg) => seg.end >= gStart && seg.start <= gEnd);
+    const visibleEvents = events
+      .filter((e: any) => {
+        if (e.ts < gStart || e.ts > gEnd) return false;
+
+        const msg = e.message ?? '';
+        const raw = e.raw ?? '';
+        const isUpdateDbCmd =
+          /UpdateDatabaseOptionsCommand/.test(msg) ||
+          /UpdateDatabaseOptionsCommand/.test(raw);
+        const isDomainProcessStateMachine =
+          /DomainProcessStateMachine/.test(msg) ||
+          /DomainProcessStateMachine/.test(raw);
+        if (!isUpdateDbCmd || !isDomainProcessStateMachine) return false;
+
+        const hasDbName = msg.includes(db) || raw.includes(db);
+        const dbNamePattern = new RegExp(`name[=:\s"']+${db}`, 'i');
+        const hasDbInParams = dbNamePattern.test(msg) || dbNamePattern.test(raw);
+
+        const matchesAnyDb = Object.keys(dbStates || {}).some((dbName) => {
+          return (
+            msg.includes(dbName) ||
+            raw.includes(dbName) ||
+            new RegExp(`name[=:\s"']+${dbName}`, 'i').test(msg) ||
+            new RegExp(`name[=:\s"']+${dbName}`, 'i').test(raw)
+          );
+        });
+
+        return hasDbName || hasDbInParams || !matchesAnyDb;
+      })
+      .sort((a: any, b: any) => a.ts - b.ts);
+
+    return visibleSegments.length > 0 || visibleEvents.length > 0
+      ? [{ db, visibleSegments, visibleEvents }]
+      : [];
+  });
+
+  if (visibleDbEntries.length === 0) {
+    return (
+      <div className="stack-area" style={{ marginBottom: 6 }}>
+        <div className="stack-row" style={{ height: 20 }}>
+          <div className="stack-label">Database</div>
+          <div className="stack-track">
+            <div className="hint" style={{ position: 'absolute', left: 0 }}>
+              No database state transitions found in the selected range.
             </div>
           </div>
         </div>
@@ -69,7 +124,7 @@ export function DatabaseTimeline({
           }}
         />
       )}
-      {Object.entries(dbStates).map(([db, segs]) => {
+      {visibleDbEntries.map(({ db, visibleSegments, visibleEvents }) => {
         return (
           <div
             key={`db-${db}`}
@@ -92,9 +147,11 @@ export function DatabaseTimeline({
           >
             <div className="stack-label">DB {db}</div>
             <div className="stack-track">
-              {segs.map((seg, idx) => {
-                const left = ((seg.start - gStart) / (gEnd - gStart)) * 100;
-                const right = ((seg.end - gStart) / (gEnd - gStart)) * 100;
+              {visibleSegments.map((seg, idx) => {
+                const visibleStart = Math.max(seg.start, gStart);
+                const visibleEnd = Math.min(seg.end, gEnd);
+                const left = ((visibleStart - gStart) / rangeSpan) * 100;
+                const right = ((visibleEnd - gStart) / rangeSpan) * 100;
                 const width = Math.max(0.2, right - left);
                 const bg = stateColor(seg.state);
                 const tooltipContent = `${seg.state} — ${seg.iso}\n${seg.message}`;
@@ -113,40 +170,11 @@ export function DatabaseTimeline({
               })}
               {/* Add UpdateDatabaseOptionsCommand events as slivers */}
               {(() => {
-                const dbEvents = events
-                  .filter((e: any) => {
-                    const msg = e.message ?? '';
-                    const raw = e.raw ?? '';
-                    const isUpdateDbCmd =
-                      /UpdateDatabaseOptionsCommand/.test(msg) ||
-                      /UpdateDatabaseOptionsCommand/.test(raw);
-                    const isDomainProcessStateMachine =
-                      /DomainProcessStateMachine/.test(msg) ||
-                      /DomainProcessStateMachine/.test(raw);
-                    if (!isUpdateDbCmd || !isDomainProcessStateMachine) return false;
-
-                    const hasDbName = msg.includes(db) || raw.includes(db);
-                    const dbNamePattern = new RegExp(`name[=:\s"']+${db}`, 'i');
-                    const hasDbInParams = dbNamePattern.test(msg) || dbNamePattern.test(raw);
-
-                    const matchesAnyDb = Object.keys(dbStates || {}).some((dbName) => {
-                      return (
-                        msg.includes(dbName) ||
-                        raw.includes(dbName) ||
-                        new RegExp(`name[=:\s"']+${dbName}`, 'i').test(msg) ||
-                        new RegExp(`name[=:\s"']+${dbName}`, 'i').test(raw)
-                      );
-                    });
-
-                    return hasDbName || hasDbInParams || !matchesAnyDb;
-                  })
-                  .sort((a: any, b: any) => a.ts - b.ts);
-
                 const groupedEvents: Array<{ events: any[]; left: number }> = [];
                 const groupThreshold = 0.5;
 
-                dbEvents.forEach((ev: any) => {
-                  const left = ((ev.ts - gStart) / (gEnd - gStart)) * 100;
+                visibleEvents.forEach((ev: any) => {
+                  const left = ((ev.ts - gStart) / rangeSpan) * 100;
                   const lastGroup = groupedEvents[groupedEvents.length - 1];
 
                   if (lastGroup && Math.abs(left - lastGroup.left) < groupThreshold) {

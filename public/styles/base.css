@@ -1,0 +1,271 @@
+body {
+  font-family: Inter, system-ui, -apple-system, Helvetica, Arial;
+  font-size: 14px;
+  margin: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app {
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.timeline {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  padding: 8px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.stack-area {
+  width: 100%;
+  padding-bottom: 8px;
+}
+
+.layer:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stack-row {
+  display: flex;
+  align-items: center;
+  height: var(--row-height);
+  position: relative;
+}
+
+.stack-label {
+  width: var(--label-width);
+  padding-right: 8px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+
+.stack-track {
+  flex: 1;
+  position: relative;
+  height: var(--row-height);
+  overflow: hidden;
+}
+
+.instance-bar {
+  position: absolute;
+  height: var(--bar-height);
+  border-radius: 2px;
+  opacity: 0.95;
+  anchor-name: attr(data-anchor-id);
+}
+
+.instance-bar:hover {
+  outline: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.db-bar {
+  opacity: 0.95;
+}
+
+.range-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.table {
+  margin-top: 12px;
+  border-collapse: collapse;
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+}
+
+.table th,
+.table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-tertiary);
+  color: var(--text-secondary);
+}
+
+.table th {
+  background: var(--table-header-bg);
+  color: var(--text-muted);
+  position: sticky;
+  top: 0;
+}
+
+.table input[type="text"],
+.table input[type="search"],
+.table select,
+.table button {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--input-border);
+}
+
+.table select {
+  padding-right: 24px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%239fb4c9' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 10px 6px;
+  background-color: var(--input-bg);
+}
+
+.table input[type="text"]:focus,
+.table input[type="search"]:focus,
+.table select:focus {
+  border-color: var(--accent);
+  background: var(--input-focus-bg);
+}
+
+.badge {
+  background: #123544;
+  color: #bff1d9;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.selection-overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--selection-overlay-start), var(--selection-overlay-end));
+  border-left: 2px dashed var(--selection-border);
+  border-right: 2px dashed var(--selection-border);
+}
+
+.hint {
+  color: var(--text-hint);
+  font-size: 13px;
+}
+
+.frp-dot:hover {
+  outline: 2px solid rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+}
+
+@keyframes pulse-red {
+  0%, 100% {
+    box-shadow: 0 0 8px 2px rgba(255, 0, 0, 0.6);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 12px 4px rgba(255, 0, 0, 0.8);
+    opacity: 0.9;
+  }
+}
+
+input[type="text"],
+input[type="search"],
+select,
+button {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+input[type="text"]:focus,
+input[type="search"]:focus,
+select:focus {
+  border-color: var(--accent);
+  background: var(--input-focus-bg);
+  box-shadow: 0 0 0 2px rgba(43, 157, 244, 0.1);
+}
+
+input[type="text"]:disabled,
+input[type="search"]:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+select {
+  cursor: pointer;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%239fb4c9' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px 8px;
+  appearance: none;
+}
+
+select:hover:not(:disabled) {
+  border-color: var(--button-border);
+  background-color: var(--input-focus-bg);
+}
+
+button {
+  cursor: pointer;
+  background: var(--button-bg);
+  border: 1px solid var(--button-border);
+  color: var(--text-primary);
+  font-weight: 500;
+  padding: 7px 14px;
+}
+
+button:hover:not(:disabled) {
+  background: var(--button-hover-bg);
+  border-color: var(--accent);
+}
+
+button:active:not(:disabled) {
+  background: var(--button-bg);
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+input[type="radio"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+label {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
