@@ -10,3 +10,4 @@ export { LogPanel } from './LogPanel';
 export { TimePointSlider } from './TimePointSlider';
 export { DomainStatePanel } from './DomainStatePanel';
 export { FileViewer } from './FileViewer';
+export { MainTimelineView } from './MainTimelineView';
