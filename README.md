@@ -382,7 +382,3 @@ Good first improvements include:
 - documenting example response payloads for each endpoint
 - expanding the file browser and export workflows
 - implementing or removing the unfinished collection-mode path
-
-## License
-
-MIT
